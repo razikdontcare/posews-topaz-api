@@ -1,0 +1,2 @@
+# Keeps the logs/ directory in the repository so PM2 can write its log files
+# (PM2 opens ./logs/pm2-*.log before the application starts).

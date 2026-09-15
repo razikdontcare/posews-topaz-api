@@ -1,0 +1,17 @@
+node_modules/
+
+# Runtime state (SQLite database + WAL files, temporary uploads, renders)
+data/
+temp/
+output/
+
+# Logs are created at runtime; the folder itself is kept so PM2 can write into it
+logs/*
+!logs/.gitkeep
+
+# Local environment
+.env
+.env.local
+
+# Scratch space
+*.log

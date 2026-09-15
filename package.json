@@ -1,0 +1,40 @@
+{
+  "name": "video-upscaler-api",
+  "version": "1.0.0",
+  "description": "Backend API for GPU video upscaling automation using Topaz Video AI custom FFmpeg/FFprobe",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "test:unit": "node --test --test-concurrency=1 \"test/unit/*.test.js\"",
+    "test:integration": "node --test --test-concurrency=1 \"test/integration/*.test.js\"",
+    "smoke": "node scripts/smoke.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:restart": "pm2 restart ecosystem.config.js",
+    "pm2:stop": "pm2 stop video-upscaler-api",
+    "pm2:logs": "pm2 logs video-upscaler-api",
+    "pm2:save": "pm2 save"
+  },
+  "keywords": [
+    "video",
+    "upscaler",
+    "topaz",
+    "ffmpeg",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0"
+  }
+}
