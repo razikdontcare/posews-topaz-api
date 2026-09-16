@@ -148,6 +148,20 @@ function buildConfig() {
   const dataDir = readPath('DATA_DIR', path.join(PROJECT_ROOT, 'data'));
   const logsDir = readPath('LOGS_DIR', path.join(PROJECT_ROOT, 'logs'));
 
+  // Per-job render tuning (the `POST /api/v1/jobs` options below).
+  const topazModel = readString('TOPAZ_MODEL', 'prob-3').toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(topazModel)) {
+    throw new ConfigError(`TOPAZ_MODEL is not a valid model name (received "${topazModel}")`);
+  }
+  const allowedModels = [topazModel];
+  for (const model of readList('ALLOWED_MODELS', ['prob-3', 'prob-4'])) {
+    const normalized = model.toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(normalized)) {
+      throw new ConfigError(`ALLOWED_MODELS contains an invalid model name ("${model}")`);
+    }
+    if (!allowedModels.includes(normalized)) allowedModels.push(normalized);
+  }
+
   const config = {
     nodeEnv,
     isProduction: nodeEnv === 'production',
@@ -178,7 +192,11 @@ function buildConfig() {
 
     // Renderer / queue
     queueConcurrency,
-    topazModel: readString('TOPAZ_MODEL', 'prob-3'),
+    topazModel,
+    allowedModels: Object.freeze(allowedModels),
+    // `false` accepts only video/width/height — the strict baseline command.
+    allowRenderTuning: readBool('ALLOW_RENDER_TUNING', true),
+    maxGpuIndex: readInt('MAX_GPU_INDEX', 0, { min: 0, max: 15 }),
     // Process name used to verify that a pid from a crashed run still belongs to
     // the renderer before it is force-killed (guards against Windows pid reuse).
     rendererProcessName: readString('RENDERER_PROCESS_NAME', 'ffmpeg'),
@@ -279,6 +297,14 @@ function createConfig(overrides = {}) {
     merged.allowedExtensions = new Set(
       overrides.allowedExtensions.map((ext) => String(ext).replace(/^\./, '').toLowerCase()),
     );
+  }
+  if (Array.isArray(overrides.allowedModels)) {
+    merged.allowedModels = Object.freeze([
+      ...new Set([
+        String(merged.topazModel).toLowerCase(),
+        ...overrides.allowedModels.map((model) => String(model).toLowerCase()),
+      ]),
+    ]);
   }
   if (overrides.warnings === undefined) merged.warnings = base.warnings;
   return Object.freeze(merged);

@@ -6,11 +6,15 @@
  *   npm start                       (in another terminal)
  *   npm run smoke                   (defaults to http://127.0.0.1:<PORT>)
  *   npm run smoke -- http://localhost:3000 640 360
+ *   npm run smoke -- --noise=0.45 --qp=20 --preset=p6 --model=prob-4 --audio=aac
  *
  * It generates a small clip with the configured ffmpeg, uploads it through the API,
  * polls the progress endpoint, downloads the result and reports the final state —
  * so the whole chain (upload -> queue -> Topaz ffmpeg -> rename -> download) is
  * verified on the machine that actually renders.
+ *
+ * `--<option>=<value>` arguments are forwarded to the API as render options, which
+ * makes it easy to check a tuned command on the render machine.
  */
 
 const { spawn } = require('node:child_process');
@@ -19,10 +23,27 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { config } = require('../src/config/env');
+const { RENDER_OPTION_FIELDS } = require('../src/domain/render-options');
 
-const baseUrl = (process.argv[2] || `http://127.0.0.1:${config.port}`).replace(/\/$/, '');
-const WIDTH = Number(process.argv[3] || 640);
-const HEIGHT = Number(process.argv[4] || 360);
+const argv = process.argv.slice(2);
+const positional = argv.filter((arg) => !arg.startsWith('--'));
+
+/** `--noise=0.45` -> `{ noise: '0.45' }` (only documented option fields are sent). */
+const renderOptionArgs = Object.fromEntries(
+  argv
+    .filter((arg) => arg.startsWith('--'))
+    .map((arg) => {
+      const [name, ...rest] = arg.slice(2).split('=');
+      return [name.toLowerCase(), rest.join('=')];
+    }),
+);
+const renderOptions = Object.fromEntries(
+  Object.entries(renderOptionArgs).filter(([name]) => RENDER_OPTION_FIELDS.includes(name)),
+);
+
+const baseUrl = (positional[0] || `http://127.0.0.1:${config.port}`).replace(/\/$/, '');
+const WIDTH = Number(positional[1] || 640);
+const HEIGHT = Number(positional[2] || 360);
 const DURATION_SECONDS = 2;
 const POLL_TIMEOUT_MS = 15 * 60 * 1000;
 const TERMINAL = ['completed', 'failed', 'cancelled'];
@@ -65,6 +86,7 @@ async function upload(filePath) {
   form.append('video', new Blob([data]), path.basename(filePath));
   form.append('width', String(WIDTH));
   form.append('height', String(HEIGHT));
+  for (const [name, value] of Object.entries(renderOptions)) form.append(name, String(value));
 
   const response = await fetch(`${baseUrl}/api/v1/jobs`, { method: 'POST', body: form });
   const body = await response.json();
@@ -95,9 +117,13 @@ async function main() {
 
     const size = await createFixture(fixture);
     console.log(`fixture  : ${path.basename(fixture)} (${size} bytes)`);
+    console.log(
+      `options  : ${Object.keys(renderOptions).length > 0 ? JSON.stringify(renderOptions) : 'baseline (none)'}`,
+    );
 
     const created = await upload(fixture);
-    console.log(`created  : ${JSON.stringify(created)}`);
+    console.log(`created  : ${JSON.stringify({ ...created, render: undefined })}`);
+    console.log(`render   : ${JSON.stringify(created.render)}`);
 
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     let previous = null;

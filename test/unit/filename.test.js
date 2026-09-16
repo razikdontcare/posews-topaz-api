@@ -16,8 +16,10 @@ const {
   removeExtension,
   renameWithRetry,
   reserveUniqueOutputPath,
+  resolutionLabel,
   sanitizeExtension,
   sanitizeFilename,
+  sanitizeOutputName,
   stripDirectory,
 } = require('../../src/utils/filename');
 
@@ -80,6 +82,73 @@ test('buildOutputFilename follows the documented naming scheme', () => {
   assert.equal(isRenderingTempFile('.abc.rendering.mp4'), true);
   assert.equal(isRenderingTempFile('final.mp4'), false);
   assert.equal(formatBytes(1536), '1.50 KiB');
+});
+
+test('resolutionLabel maps target resolutions to consumer labels', () => {
+  assert.equal(resolutionLabel(3840, 1620), '4K');
+  assert.equal(resolutionLabel(3840, 2160), '4K');
+  assert.equal(resolutionLabel(4096, 2160), '4K');
+  assert.equal(resolutionLabel(2160, 3840), '4K'); // portrait
+  assert.equal(resolutionLabel(7680, 4320), '8K');
+  assert.equal(resolutionLabel(5120, 2880), '5K');
+  assert.equal(resolutionLabel(2560, 1440), '1440p');
+  assert.equal(resolutionLabel(1920, 1080), '1080p');
+  assert.equal(resolutionLabel(1080, 1920), '1080p'); // portrait
+  assert.equal(resolutionLabel(1280, 720), '720p');
+  assert.equal(resolutionLabel(640, 360), '640x360');
+  assert.equal(resolutionLabel(0, 0), null);
+  assert.equal(resolutionLabel(undefined, undefined), null);
+});
+
+test('sanitizeOutputName strips directories, extensions and invalid characters', () => {
+  assert.equal(sanitizeOutputName('  My Video.MP4 '), 'My Video');
+  assert.equal(sanitizeOutputName('sosul eater rev'), 'sosul eater rev');
+  assert.equal(sanitizeOutputName('..\\..\\evil.mp4'), 'evil');
+  assert.equal(sanitizeOutputName('/etc/passwd'), 'passwd');
+  assert.equal(sanitizeOutputName('v1.2'), 'v1.2', 'only real video extensions are stripped');
+  assert.equal(sanitizeOutputName('a<b>c?d*e.mp4'), 'a_b_c_d_e');
+  assert.equal(sanitizeOutputName('CON.mp4'), '_CON');
+  assert.equal(sanitizeOutputName('...'), '');
+  assert.equal(sanitizeOutputName('x'.repeat(200)).length, 80);
+});
+
+test('buildOutputFilename honours a client-provided output name', () => {
+  // The client's requested format: "(filename) 4K.mp4".
+  assert.equal(
+    buildOutputFilename({
+      originalFilename: 'downloaded.mp4',
+      width: 3840,
+      height: 1620,
+      outputName: 'sosul eater rev',
+      label: '4K',
+    }),
+    'sosul eater rev 4K.mp4',
+  );
+  // A provided extension is not duplicated.
+  assert.equal(
+    buildOutputFilename({ originalFilename: 'a.mp4', width: 1920, height: 1080, outputName: 'My Video.mp4', label: '1080p' }),
+    'My Video 1080p.mp4',
+  );
+  // No label -> no trailing space.
+  assert.equal(
+    buildOutputFilename({ originalFilename: 'a.mp4', width: 1280, height: 720, outputName: 'clip', label: '   ' }),
+    'clip.mp4',
+  );
+  // Path components cannot escape the output directory.
+  assert.equal(
+    buildOutputFilename({ originalFilename: 'a.mp4', width: 1280, height: 720, outputName: '..\\..\\evil', label: null }),
+    'evil.mp4',
+  );
+  // Unusable custom name -> the automatic scheme.
+  assert.equal(
+    buildOutputFilename({ originalFilename: 'source.mp4', width: 1280, height: 720, outputName: '...', label: '4K' }),
+    'source_prob3_1280x720.mp4',
+  );
+  // No custom name at all -> the documented automatic scheme.
+  assert.equal(
+    buildOutputFilename({ originalFilename: 'sosul eater rev.mp4', width: 3840, height: 1620, model: 'prob-4' }),
+    'sosul eater rev_prob4_3840x1620.mp4',
+  );
 });
 
 test('reserveUniqueOutputPath never reuses an existing filename', async () => {

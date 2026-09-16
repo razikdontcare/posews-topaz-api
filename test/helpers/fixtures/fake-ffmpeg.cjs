@@ -19,6 +19,27 @@ const mode = process.env.FAKE_FFMPEG_MODE || 'success';
 const log = (line) => process.stdout.write(`${line}\n`);
 const err = (line) => process.stderr.write(`${line}\n`);
 
+/** Records every invocation so tests can assert the exact argument vector. */
+function recordInvocation(kind) {
+  const file = process.env.FAKE_FFMPEG_ARGS_FILE;
+  if (!file) return;
+  try {
+    fs.appendFileSync(file, `${JSON.stringify({ kind, args })}\n`);
+  } catch {
+    /* the recording is best effort */
+  }
+}
+
+recordInvocation(
+  args.includes('-version')
+    ? 'version'
+    : args.includes('-filters')
+      ? 'filters'
+      : args.includes('-encoders')
+        ? 'encoders'
+        : 'render',
+);
+
 // ---- capability queries (startup validation) -------------------------------
 if (args.includes('-version')) {
   log('ffmpeg version 7.1-fake-topaz Copyright (c) 2000-2026 the FFmpeg developers');

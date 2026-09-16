@@ -36,6 +36,7 @@ function resetRendererEnv() {
     FAKE_FFMPEG_DELAY_MS: '0',
     FAKE_FFMPEG_OUTPUT_BYTES: '4096',
     FAKE_FFMPEG_FORCE: undefined,
+    FAKE_FFMPEG_ARGS_FILE: undefined,
     FAKE_FFPROBE_MODE: 'ok',
     FAKE_FFPROBE_DURATION: '10',
     FAKE_FFPROBE_AUDIO: undefined,

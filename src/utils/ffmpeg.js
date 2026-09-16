@@ -11,7 +11,11 @@
 
 const { errors } = require('./errors');
 
-/** Immutable default filter parameters (Topaz `tvai_up` / model prob-3). */
+/**
+ * Immutable default filter parameters (Topaz `tvai_up` / model prob-3).
+ * Per-job overrides are limited to `TVAI_TUNABLE_KEYS` and validated against
+ * `TVAI_TUNABLE_RANGES` — the model/scale/baseline values stay configuration.
+ */
 const TOPAZ_FILTER_DEFAULTS = Object.freeze({
   model: 'prob-3',
   scale: 0,
@@ -27,6 +31,46 @@ const TOPAZ_FILTER_DEFAULTS = Object.freeze({
   instances: 1,
 });
 
+/** Order used inside the `tvai_up` filter string (never reorder: it is the baseline). */
+const TVAI_TUNABLE_KEYS = Object.freeze([
+  'preblur',
+  'noise',
+  'details',
+  'halo',
+  'blur',
+  'compression',
+  'blend',
+  'device',
+  'vram',
+  'instances',
+]);
+
+/** Accepted range for every tunable; also reused to describe the API options. */
+const TVAI_TUNABLE_RANGES = Object.freeze({
+  preblur: Object.freeze({ min: -1, max: 1, integer: false }),
+  noise: Object.freeze({ min: 0, max: 1, integer: false }),
+  details: Object.freeze({ min: 0, max: 1, integer: false }),
+  halo: Object.freeze({ min: 0, max: 1, integer: false }),
+  blur: Object.freeze({ min: 0, max: 1, integer: false }),
+  compression: Object.freeze({ min: 0, max: 1, integer: false }),
+  blend: Object.freeze({ min: 0, max: 1, integer: false }),
+  device: Object.freeze({ min: 0, max: 15, integer: true }),
+  vram: Object.freeze({ min: 0, max: 1, integer: true }),
+  instances: Object.freeze({ min: 1, max: 4, integer: true }),
+});
+
+/** NVENC legacy-free presets: p1 = fastest, p7 = slowest/best (baseline: p7). */
+const NVENC_PRESETS = Object.freeze(['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7']);
+const DEFAULT_NVENC_PRESET = 'p7';
+/** `-rc constqp` quality knob: lower = better quality and bigger files. */
+const DEFAULT_QP = 25;
+const QP_RANGE = Object.freeze({ min: 1, max: 51 });
+/**
+ * Output frame rate accepted by the `fps` filter (frame duplication/dropping).
+ * Fractional NTSC rates are allowed (23.976, 29.97, 59.94).
+ */
+const FPS_RANGE = Object.freeze({ min: 1, max: 240, decimals: 3 });
+
 const SWSCALE_FLAGS = 'spline+accurate_rnd+full_chroma_int';
 const COLOR_ARGUMENTS = Object.freeze([
   ['-color_trc', '1'],
@@ -34,20 +78,17 @@ const COLOR_ARGUMENTS = Object.freeze([
   ['-color_primaries', '1'],
 ]);
 
-const VIDEO_ENCODER_ARGUMENTS = Object.freeze([
-  ['-c:v', 'h264_nvenc'],
-  ['-profile:v', 'high'],
-  ['-pix_fmt', 'yuv420p'],
-  ['-preset', 'p7'],
-  ['-tune', 'hq'],
-  ['-rc', 'constqp'],
-  ['-qp', '25'],
-  ['-rc-lookahead', '20'],
-  ['-spatial_aq', '1'],
-  ['-temporal_aq', '1'],
-  ['-aq-strength', '15'],
-  ['-b:v', '0'],
-]);
+const VIDEO_ENCODER_ARGUMENTS_TEMPLATE = Object.freeze({
+  codec: 'h264_nvenc',
+  profile: 'high',
+  pixelFormat: 'yuv420p',
+  tune: 'hq',
+  rateControl: 'constqp',
+  lookahead: 20,
+  spatialAq: 1,
+  temporalAq: 1,
+  aqStrength: 15,
+});
 
 const MOVFLAGS = 'frag_keyframe+empty_moov+delay_moov+use_metadata_tags+write_colr';
 
@@ -72,28 +113,84 @@ function assertDimension(value, name, bounds) {
   return value;
 }
 
-/** `tvai_up=model=prob-3:scale=0:w=3840:h=1620:preblur=...:instances=1`. */
-function buildTvaiFilter({ width, height, model = TOPAZ_FILTER_DEFAULTS.model }) {
+/**
+ * ```
+ * tvai_up=model=prob-3:scale=0:w=3840:h=1620:preblur=...:instances=1
+ * ```
+ * `w`/`h` always come from the request; the tunables fall back to the frozen
+ * baseline so the string is identical to the documented default command.
+ */
+function buildTvaiFilter({
+  width,
+  height,
+  model = TOPAZ_FILTER_DEFAULTS.model,
+  parameters = {},
+}) {
   if (!MODEL_PATTERN.test(String(model))) {
     throw errors.validation('Unsupported Topaz model name.');
   }
-  const parameters = [
+
+  const values = {};
+  for (const key of TVAI_TUNABLE_KEYS) {
+    const override = parameters[key];
+    values[key] = override === undefined || override === null ? TOPAZ_FILTER_DEFAULTS[key] : override;
+  }
+
+  const parts = [
     `model=${model}`,
     `scale=${TOPAZ_FILTER_DEFAULTS.scale}`,
     `w=${width}`,
     `h=${height}`,
-    `preblur=${TOPAZ_FILTER_DEFAULTS.preblur}`,
-    `noise=${TOPAZ_FILTER_DEFAULTS.noise}`,
-    `details=${TOPAZ_FILTER_DEFAULTS.details}`,
-    `halo=${TOPAZ_FILTER_DEFAULTS.halo}`,
-    `blur=${TOPAZ_FILTER_DEFAULTS.blur}`,
-    `compression=${TOPAZ_FILTER_DEFAULTS.compression}`,
-    `blend=${TOPAZ_FILTER_DEFAULTS.blend}`,
-    `device=${TOPAZ_FILTER_DEFAULTS.device}`,
-    `vram=${TOPAZ_FILTER_DEFAULTS.vram}`,
-    `instances=${TOPAZ_FILTER_DEFAULTS.instances}`,
+    ...TVAI_TUNABLE_KEYS.map((key) => `${key}=${values[key]}`),
   ];
-  return `${TOPAZ_FILTER_NAME}=${parameters.join(':')}`;
+  return `${TOPAZ_FILTER_NAME}=${parts.join(':')}`;
+}
+
+/**
+ * The H.264/NVENC block of the baseline command, with the two quality knobs
+ * (`-qp` and `-preset`) adjustable.
+ */
+function buildVideoEncoderArguments({ qp = DEFAULT_QP, preset = DEFAULT_NVENC_PRESET } = {}) {
+  if (!NVENC_PRESETS.includes(preset)) {
+    throw errors.validation(`encoder preset must be one of ${NVENC_PRESETS.join(', ')}.`, {
+      field: 'preset',
+      allowed: [...NVENC_PRESETS],
+    });
+  }
+  if (!Number.isInteger(qp) || qp < QP_RANGE.min || qp > QP_RANGE.max) {
+    throw errors.validation(`qp must be an integer between ${QP_RANGE.min} and ${QP_RANGE.max}.`, {
+      field: 'qp',
+      min: QP_RANGE.min,
+      max: QP_RANGE.max,
+    });
+  }
+
+  const template = VIDEO_ENCODER_ARGUMENTS_TEMPLATE;
+  return [
+    '-c:v', template.codec,
+    '-profile:v', template.profile,
+    '-pix_fmt', template.pixelFormat,
+    '-preset', preset,
+    '-tune', template.tune,
+    '-rc', template.rateControl,
+    '-qp', String(qp),
+    '-rc-lookahead', String(template.lookahead),
+    '-spatial_aq', String(template.spatialAq),
+    '-temporal_aq', String(template.temporalAq),
+    '-aq-strength', String(template.aqStrength),
+    '-b:v', '0',
+  ];
+}
+
+/** The frozen baseline encoder block (no per-job overrides). */
+const VIDEO_ENCODER_ARGUMENTS = Object.freeze(buildVideoEncoderArguments());
+
+/** Post-up scale to the requested resolution plus the bt709 colour conversion. */
+function buildScaleFilters({ width, height }) {
+  return [
+    `scale=w=${width}:h=${height}:flags=lanczos:threads=0`,
+    'scale=out_color_matrix=bt709',
+  ];
 }
 
 /** Post-up scale to the requested resolution plus the bt709 colour conversion. */
@@ -104,10 +201,31 @@ function buildScaleFilters({ width, height }) {
   ];
 }
 
-function buildFilterComplex({ width, height, model }) {
-  return [buildTvaiFilter({ width, height, model }), ...buildScaleFilters({ width, height })].join(
-    ',',
-  );
+/**
+ * Optional output frame rate. This is a frame-rate *conversion* (ffmpeg's `fps`
+ * filter duplicates/drops frames) — it does not synthesise new motion.
+ * Returns `null` when the source frame rate should be kept.
+ */
+function buildFpsFilter(fps) {
+  if (fps === null || fps === undefined) return null;
+  if (!Number.isFinite(fps) || fps < FPS_RANGE.min || fps > FPS_RANGE.max) {
+    throw errors.validation(`fps must be a number between ${FPS_RANGE.min} and ${FPS_RANGE.max}.`, {
+      field: 'fps',
+      min: FPS_RANGE.min,
+      max: FPS_RANGE.max,
+    });
+  }
+  return `fps=${Number(fps.toFixed(FPS_RANGE.decimals))}`;
+}
+
+function buildFilterComplex({ width, height, model, parameters, fps }) {
+  const filters = [
+    buildTvaiFilter({ width, height, model, parameters }),
+    ...buildScaleFilters({ width, height }),
+  ];
+  const fpsFilter = buildFpsFilter(fps);
+  if (fpsFilter) filters.push(fpsFilter);
+  return filters.join(',');
 }
 
 /**
@@ -117,13 +235,17 @@ function buildFilterComplex({ width, height, model }) {
  * verbatim whenever the input really has an AAC audio stream: `-map 0:a` makes
  * ffmpeg fail on silent videos, and the ADTS bitstream filter makes it fail on
  * non-AAC audio, so both are applied conditionally.
- * `mode` is `auto` (default), `copy` or `reencode` (config `AUDIO_MODE`).
+ * `mode` is `auto` (default), `copy`, `aac`/`reencode` or `none` (drop audio).
  */
 function buildAudioArguments({ hasAudio, audioCodec, mode = 'auto' }) {
+  if (mode === 'none') {
+    // Drop the audio track entirely (no `-map 0:a`, so nothing is muxed in).
+    return ['-an'];
+  }
   if (hasAudio === false) return [];
   const codec = audioCodec ? String(audioCodec).toLowerCase() : null;
 
-  if (mode === 'reencode' || (mode === 'auto' && codec && !MP4_COPY_SAFE_AUDIO.has(codec))) {
+  if (mode === 'reencode' || mode === 'aac' || (mode === 'auto' && codec && !MP4_COPY_SAFE_AUDIO.has(codec))) {
     // e.g. vorbis / pcm in an mkv cannot be muxed into mp4 as-is.
     return ['-map', '0:a', '-c:a', 'aac', '-b:a', '192k'];
   }
@@ -150,9 +272,12 @@ function buildAudioArguments({ hasAudio, audioCodec, mode = 'auto' }) {
  *   width: number,
  *   height: number,
  *   model?: string,
+ *   topaz?: object,
+ *   encoder?: { qp?: number, preset?: string },
+ *   fps?: number|null,
  *   hasAudio?: boolean|null,
  *   audioCodec?: string|null,
- *   audioMode?: 'auto'|'copy'|'reencode',
+ *   audioMode?: 'auto'|'copy'|'aac'|'reencode'|'none',
  *   bounds?: { min: number, max: number, enforceEven: boolean },
  * }} options
  */
@@ -163,6 +288,9 @@ function buildFfmpegArgs(options) {
     width,
     height,
     model = TOPAZ_FILTER_DEFAULTS.model,
+    topaz = {},
+    encoder = {},
+    fps = null,
     hasAudio = true,
     audioCodec = null,
     audioMode = 'auto',
@@ -194,9 +322,18 @@ function buildFfmpegArgs(options) {
 
   for (const [flag, value] of COLOR_ARGUMENTS) args.push(flag, value);
 
-  args.push('-filter_complex', buildFilterComplex({ width, height, model }));
+  const resolvedModel = topaz?.model || model;
+  args.push(
+    '-filter_complex',
+    buildFilterComplex({ width, height, model: resolvedModel, parameters: topaz, fps }),
+  );
 
-  for (const [flag, value] of VIDEO_ENCODER_ARGUMENTS) args.push(flag, value);
+  args.push(
+    ...buildVideoEncoderArguments({
+      qp: encoder.qp !== undefined ? encoder.qp : DEFAULT_QP,
+      preset: encoder.preset !== undefined ? encoder.preset : DEFAULT_NVENC_PRESET,
+    }),
+  );
 
   args.push(...buildAudioArguments({ hasAudio, audioCodec, mode: audioMode }));
 
@@ -371,22 +508,31 @@ function classifyFfmpegFailure(stderrTail, maxLength = 1000) {
 module.exports = {
   CAPABILITY_COMMANDS,
   COLOR_ARGUMENTS,
+  DEFAULT_NVENC_PRESET,
+  DEFAULT_QP,
+  FPS_RANGE,
   MODEL_PATTERN,
   MOVFLAGS,
   MP4_COPY_SAFE_AUDIO,
   NVENC_ENCODER_NAME,
+  NVENC_PRESETS,
+  QP_RANGE,
   SWSCALE_FLAGS,
   TOPAZ_FILTER_DEFAULTS,
   TOPAZ_FILTER_NAME,
+  TVAI_TUNABLE_KEYS,
+  TVAI_TUNABLE_RANGES,
   VIDEO_ENCODER_ARGUMENTS,
   assertDimension,
   buildAudioArguments,
   buildFfmpegArgs,
   buildFilterComplex,
+  buildFpsFilter,
   buildModelSelftestArgs,
   buildProbeArgs,
   buildScaleFilters,
   buildTvaiFilter,
+  buildVideoEncoderArguments,
   classifyFfmpegFailure,
   hasEncoder,
   hasFilter,

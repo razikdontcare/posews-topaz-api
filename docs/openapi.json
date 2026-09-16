@@ -1,0 +1,915 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "video-upscaler-api",
+    "version": "1.0.0",
+    "description": "Video upscaling automation with the custom Topaz Video AI FFmpeg/FFprobe binaries.\n\nUploads are streamed to disk, jobs are persisted in SQLite and rendered **one at a time** on the GPU. The browser is only an observer: closing it never stops a render.\n\nHuman-readable guide with recipes and TypeScript helpers: `docs/API.md`.\n\nErrors always use the envelope `{ \"error\": { \"code\": \"…\", \"message\": \"…\", \"details\": … } }`.",
+    "contact": { "name": "Backend team" },
+    "license": { "name": "ISC" }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local renderer machine (PORT is configurable)"
+    }
+  ],
+  "tags": [
+    { "name": "Jobs", "description": "Create, inspect, cancel, delete and download upscaling jobs." },
+    { "name": "System", "description": "Liveness, renderer health and queue status." }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Liveness probe",
+        "description": "Returns `ok` whenever the HTTP server answers. It does **not** report renderer health — use `/api/v1/system/status` for that.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/status": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Renderer and queue status",
+        "description": "Use this for an operational banner and to read `thresholds` for client-side upload validation. `renderer.status` is `available` (idle, healthy), `busy` (rendering) or `unavailable` (uploads are rejected with 503 and the queue is paused).",
+        "operationId": "getSystemStatus",
+        "responses": {
+          "200": {
+            "description": "Current renderer, queue and job counters",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SystemStatusResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Upload a video and create a job",
+        "description": "`multipart/form-data` upload. The file is streamed straight to disk (no memory buffering) and validated with the Topaz ffprobe before the job row is created.\n\nThe response is returned as soon as the upload is stored — never after the render. Width/height must be **even** numbers (H.264 yuv420p) within the configured range; read the limits and the full option list from `/api/v1/system/status` (`thresholds` and `renderOptions`).\n\nRender tuning (`model`, `device`, `vram`, `instances`, `preblur`, `noise`, `details`, `halo`, `blur`, `compression`, `blend`, `qp`, `preset`, `audio`, `fps`, `filename`, `label`) is optional: every option defaults to the documented Topaz baseline, and the response echoes the resolved values in `render`. Unknown fields are ignored.\n\nErrors: `400` (`VALIDATION_ERROR`, `INVALID_VIDEO`, `UPLOAD_ERROR`), `413` (`UPLOAD_TOO_LARGE`), `415` (`UNSUPPORTED_MEDIA_TYPE`), `503` (`RENDERER_UNAVAILABLE`).",
+        "operationId": "createJob",
+        "parameters": [
+          { "$ref": "#/components/parameters/RequestIdHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["video", "width", "height"],
+                "properties": {
+                  "video": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The video file. Extension must be in the server allowlist and the file must contain a decodable video stream. The filename is stored as metadata only (path components are stripped)."
+                  },
+                  "width": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 7680,
+                    "description": "Target width. Sent as a text part; must be even (yuv420p)."
+                  },
+                  "height": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "maximum": 7680,
+                    "description": "Target height. Sent as a text part; must be even (yuv420p)."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Topaz upscale model. Must be one of `renderOptions.fields.model.allowed` (default `prob-3`).",
+                    "example": "prob-3"
+                  },
+                  "device": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "GPU device index passed to `tvai_up` (default `0`; upper bound is `MAX_GPU_INDEX`).",
+                    "example": 0
+                  },
+                  "vram": {
+                    "type": "integer",
+                    "enum": [0, 1],
+                    "description": "Low VRAM mode (`1` = baseline). Accepts `0/1`, `true/false`, `yes/no`."
+                  },
+                  "instances": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4,
+                    "description": "Number of Topaz model instances (default `1`)."
+                  },
+                  "preblur": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1,
+                    "description": "`tvai_up:preblur` (baseline `-0.100659`)."
+                  },
+                  "noise": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:noise` (baseline `0.25`)."
+                  },
+                  "details": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:details` (baseline `0.75`)."
+                  },
+                  "halo": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:halo` (baseline `0.05`)."
+                  },
+                  "blur": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:blur` (baseline `0.25`)."
+                  },
+                  "compression": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:compression` (baseline `0.2`)."
+                  },
+                  "blend": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "`tvai_up:blend` (baseline `0.6`)."
+                  },
+                  "qp": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 51,
+                    "description": "H.264 constant quantization parameter: lower = better quality, bigger file (baseline `25`)."
+                  },
+                  "preset": {
+                    "type": "string",
+                    "enum": ["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
+                    "description": "NVENC preset: `p1` fastest … `p7` best (baseline `p7`)."
+                  },
+                  "audio": {
+                    "type": "string",
+                    "enum": ["auto", "copy", "aac", "reencode", "none"],
+                    "description": "Audio handling: `auto` copies mp4-safe codecs and re-encodes the rest, `copy`, `aac`/`reencode`, or `none` to drop the audio track."
+                  },
+                  "fps": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 240,
+                    "description": "Output frame rate (frame duplication/dropping, no motion interpolation). Fractional rates are allowed (`23.976`, `29.97`, `59.94`). Omit to keep the source frame rate."
+                  },
+                  "filename": {
+                    "type": "string",
+                    "description": "Custom output name without extension: the render is written as `<filename> <label>.mp4` (e.g. `filename=sosul eater rev` + 3840x1620 -> `sosul eater rev 4K.mp4`). Directory components, invalid Windows characters and a provided extension are sanitized/stripped. Collisions get a `_<jobId>-n` suffix.",
+                    "example": "sosul eater rev"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Suffix used together with `filename`. Defaults to the resolution class of the target resolution (4K, 1440p, 1080p, 720p or `WxH`). Requires `filename`.",
+                    "example": "4K"
+                  }
+                }
+              },
+              "encoding": {
+                "video": { "contentType": "application/octet-stream" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Upload accepted, job created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreateJobResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "413": { "$ref": "#/components/responses/UploadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "503": { "$ref": "#/components/responses/RendererUnavailable" }
+        }
+      },
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "List jobs (newest first, paginated)",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "default": 1 },
+            "description": "1-based page number."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+            "description": "Page size (clamped to 1…100)."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/JobStatus" },
+            "description": "Only return jobs in this status."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of jobs",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobListResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/JobIdPath" }],
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Full job detail",
+        "operationId": "getJob",
+        "responses": {
+          "200": {
+            "description": "Job detail",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobDetail" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/JobNotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Jobs"],
+        "summary": "Delete a job (optionally including the rendered file)",
+        "description": "Allowed for `queued`, `completed`, `failed` and `cancelled` jobs. Refused with `409 JOB_ACTIVE` while the job is `probing`, `processing` or `cancel_requested`. The rendered file is kept unless `deleteOutput=true`.",
+        "operationId": "deleteJob",
+        "parameters": [
+          {
+            "name": "deleteOutput",
+            "in": "query",
+            "schema": { "type": "boolean", "default": false },
+            "description": "Also delete the rendered MP4 from the output folder (`true`, `1` or `yes`)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job removed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DeleteJobResponse" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/JobNotFound" },
+          "409": {
+            "description": "`JOB_ACTIVE` — cancel the job and wait until it stops.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/progress": {
+      "parameters": [{ "$ref": "#/components/parameters/JobIdPath" }],
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Lightweight progress (poll this ~1×/second)",
+        "description": "Reads in-memory state plus SQLite only — safe for a 1 Hz timer. `error` appears only for failed jobs; `completed` appears only for terminal statuses (`true` = succeeded). Stop polling as soon as `completed` is present.",
+        "operationId": "getJobProgress",
+        "responses": {
+          "200": {
+            "description": "Progress snapshot",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobProgress" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/JobNotFound" }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/download": {
+      "parameters": [{ "$ref": "#/components/parameters/JobIdPath" }],
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Stream the rendered MP4",
+        "description": "Streams the finished file with range support (`206`) and an RFC 5987 `Content-Disposition` containing both an ASCII fallback (`filename=\"…\"`) and the real name (`filename*=UTF-8''…`). Only available for `completed` jobs.",
+        "operationId": "downloadJob",
+        "parameters": [
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "Standard HTTP range, e.g. `bytes=0-1023`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rendered file",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" } },
+              "Content-Length": { "schema": { "type": "integer" } },
+              "Accept-Ranges": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "video/mp4": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "206": {
+            "description": "Partial content",
+            "content": {
+              "video/mp4": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/JobNotFound" },
+          "409": {
+            "description": "`JOB_NOT_COMPLETED` — the job is still queued/rendering, failed or was cancelled.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+            }
+          },
+          "500": {
+            "description": "`OUTPUT_FILE_MISSING` — the rendered file no longer exists on the server.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/cancel": {
+      "parameters": [{ "$ref": "#/components/parameters/JobIdPath" }],
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Cancel a queued or rendering job",
+        "description": "`queued`/`probing` become `cancelled` immediately; `processing` becomes `cancel_requested`, the ffmpeg process tree is terminated and the partial output deleted, then the job ends as `cancelled`. The response is the full job detail — usually already `cancelled`.",
+        "operationId": "cancelJob",
+        "responses": {
+          "200": {
+            "description": "Cancellation applied (status `cancelled`, or `cancel_requested` if the process needed longer)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobDetail" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/JobNotFound" },
+          "409": {
+            "description": "`JOB_NOT_CANCELLABLE` (already failed/cancelled) or `JOB_ALREADY_COMPLETED`.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "JobIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "format": "uuid" },
+        "description": "Job id returned by `POST /api/v1/jobs`."
+      },
+      "RequestIdHeader": {
+        "name": "x-request-id",
+        "in": "header",
+        "required": false,
+        "schema": { "type": "string", "pattern": "^[A-Za-z0-9._-]{8,128}$" },
+        "description": "Optional correlation id; the server echoes it back and includes it in its logs."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "`VALIDATION_ERROR`, `INVALID_VIDEO` or `UPLOAD_ERROR`",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      },
+      "UploadTooLarge": {
+        "description": "`UPLOAD_TOO_LARGE` — the response is sent with `Connection: close`.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "`UNSUPPORTED_MEDIA_TYPE` — the body was not `multipart/form-data`.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      },
+      "JobNotFound": {
+        "description": "`JOB_NOT_FOUND` — unknown job id.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      },
+      "RendererUnavailable": {
+        "description": "`RENDERER_UNAVAILABLE` — the GPU renderer is offline; retry later.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      }
+    },
+    "schemas": {
+      "JobStatus": {
+        "type": "string",
+        "description": "`queued` (waiting) · `probing` (ffprobe) · `processing` (rendering) · `cancel_requested` (stopping) · `completed` / `failed` / `cancelled` (terminal). Only one job renders at a time.",
+        "enum": [
+          "queued",
+          "probing",
+          "processing",
+          "completed",
+          "failed",
+          "cancel_requested",
+          "cancelled"
+        ]
+      },
+      "JobOutput": {
+        "type": "object",
+        "description": "The rendered file. `null` until the job completed successfully.",
+        "required": ["filename", "sizeBytes"],
+        "properties": {
+          "filename": { "type": "string", "example": "sosul eater rev_prob3_3840x1620.mp4" },
+          "sizeBytes": { "type": ["integer", "null"], "example": 1892344331 }
+        }
+      },
+      "JobError": {
+        "type": "object",
+        "description": "Why a job failed. `code` is stable; `message` is human readable.",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "$ref": "#/components/schemas/ApiErrorCode" },
+          "message": {
+            "type": "string",
+            "example": "Topaz model is not available: Model not found: prob-3. Open Topaz Video AI once to download the model, then retry the job."
+          }
+        }
+      },
+      "ProgressMetrics": {
+        "type": "object",
+        "required": ["percent", "frame", "fps", "speed", "elapsedSeconds", "durationSeconds"],
+        "properties": {
+          "percent": { "type": "number", "minimum": 0, "maximum": 100, "example": 47.85 },
+          "frame": { "type": ["integer", "null"], "example": 12842 },
+          "fps": { "type": ["number", "null"], "example": 31.4 },
+          "speed": { "type": ["string", "null"], "example": "0.82x" },
+          "elapsedSeconds": { "type": ["number", "null"], "example": 513 },
+          "durationSeconds": {
+            "type": ["number", "null"],
+            "description": "Source duration. `null` when the container does not expose one — then `percent` stays 0 until the render finishes.",
+            "example": 1072
+          }
+        }
+      },
+      "Timestamps": {
+        "type": "object",
+        "required": ["createdAt", "startedAt", "completedAt", "updatedAt"],
+        "properties": {
+          "createdAt": { "type": "string", "format": "date-time", "example": "2026-09-14T07:30:00.123Z" },
+          "startedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Set when rendering started."
+          },
+          "completedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Set when the job reached a terminal state (completed, failed or cancelled)."
+          },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "JobDetail": {
+        "type": "object",
+        "required": ["id", "status", "input", "output", "resolution", "progress", "timestamps", "error"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid", "example": "9016409b-60a0-43e1-8a4c-855131aa2466" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "input": {
+            "type": "object",
+            "required": ["filename"],
+            "properties": {
+              "filename": {
+                "type": "string",
+                "description": "Sanitized original filename (metadata only — server paths are never exposed).",
+                "example": "sosul eater rev.mp4"
+              }
+            }
+          },
+          "output": {
+            "oneOf": [{ "$ref": "#/components/schemas/JobOutput" }, { "type": "null" }]
+          },
+          "resolution": {
+            "type": "object",
+            "required": ["width", "height"],
+            "properties": {
+              "width": { "type": "integer", "example": 3840 },
+              "height": { "type": "integer", "example": 1620 }
+            }
+          },
+          "render": {
+            "description": "Resolved render options; `null` for jobs created before the options existed.",
+            "oneOf": [{ "$ref": "#/components/schemas/RenderOptions" }, { "type": "null" }]
+          },
+          "progress": { "$ref": "#/components/schemas/ProgressMetrics" },
+          "timestamps": { "$ref": "#/components/schemas/Timestamps" },
+          "error": {
+            "oneOf": [{ "$ref": "#/components/schemas/JobError" }, { "type": "null" }]
+          }
+        }
+      },
+      "JobSummary": {
+        "description": "List item: a job detail plus the informational queue position.",
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "input",
+          "output",
+          "resolution",
+          "progress",
+          "timestamps",
+          "error",
+          "queuePosition"
+        ],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "input": {
+            "type": "object",
+            "required": ["filename"],
+            "properties": { "filename": { "type": "string" } }
+          },
+          "output": { "oneOf": [{ "$ref": "#/components/schemas/JobOutput" }, { "type": "null" }] },
+          "resolution": {
+            "type": "object",
+            "required": ["width", "height"],
+            "properties": { "width": { "type": "integer" }, "height": { "type": "integer" } }
+          },
+          "render": {
+            "oneOf": [{ "$ref": "#/components/schemas/RenderOptions" }, { "type": "null" }]
+          },
+          "progress": { "$ref": "#/components/schemas/ProgressMetrics" },
+          "timestamps": { "$ref": "#/components/schemas/Timestamps" },
+          "error": { "oneOf": [{ "$ref": "#/components/schemas/JobError" }, { "type": "null" }] },
+          "queuePosition": {
+            "type": ["integer", "null"],
+            "description": "1-based position in the render pipeline. Only set while `status === \"queued\"`; display-only.",
+            "example": 2
+          }
+        }
+      },
+      "JobProgress": {
+        "type": "object",
+        "required": ["id", "status", "progress", "frame", "fps", "speed", "elapsed", "duration", "output"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "progress": { "type": "number", "minimum": 0, "maximum": 100 },
+          "frame": { "type": ["integer", "null"] },
+          "fps": { "type": ["number", "null"] },
+          "speed": { "type": ["string", "null"], "example": "0.82x" },
+          "elapsed": { "type": ["number", "null"], "description": "Seconds of media processed." },
+          "duration": { "type": ["number", "null"], "description": "Source duration in seconds." },
+          "output": { "oneOf": [{ "$ref": "#/components/schemas/JobOutput" }, { "type": "null" }] },
+          "error": {
+            "$ref": "#/components/schemas/JobError",
+            "description": "Present only when the job failed."
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "Present only for terminal statuses: `true` for `completed`, `false` for `failed`/`cancelled`. Stop polling when this key exists."
+          }
+        }
+      },
+      "CreateJobResponse": {
+        "type": "object",
+        "required": ["id", "status", "position", "width", "height", "render"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": {
+            "type": "string",
+            "description": "`processing` when the renderer was idle and the job started immediately.",
+            "enum": ["queued", "processing"]
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Informational: 1 = rendering now or next in line.",
+            "example": 2
+          },
+          "width": { "type": "integer", "example": 3840 },
+          "height": { "type": "integer", "example": 1620 },
+          "render": {
+            "$ref": "#/components/schemas/RenderOptions",
+            "description": "Resolved render options (defaults filled in)."
+          }
+        }
+      },
+      "JobListResponse": {
+        "type": "object",
+        "required": ["data", "pagination"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/JobSummary" } },
+          "pagination": { "$ref": "#/components/schemas/Pagination" }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "required": ["page", "limit", "total", "totalPages"],
+        "properties": {
+          "page": { "type": "integer", "example": 1 },
+          "limit": { "type": "integer", "example": 20 },
+          "total": { "type": "integer", "example": 43 },
+          "totalPages": { "type": "integer", "minimum": 1, "example": 3 }
+        }
+      },
+      "DeleteJobResponse": {
+        "type": "object",
+        "required": ["id", "deleted", "outputDeleted"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "deleted": { "type": "boolean", "const": true },
+          "outputDeleted": {
+            "type": "boolean",
+            "description": "`true` only when `deleteOutput=true` was passed and the rendered file was removed."
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "service", "uptimeSeconds"],
+        "properties": {
+          "status": { "type": "string", "const": "ok" },
+          "service": { "type": "string", "example": "video-upscaler-api" },
+          "uptimeSeconds": { "type": "integer", "example": 84612 }
+        }
+      },
+      "SystemStatusResponse": {
+        "type": "object",
+        "required": ["status", "service", "uptimeSeconds", "renderer", "queue", "jobs", "thresholds"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "degraded"],
+            "description": "`degraded` when the renderer is unavailable."
+          },
+          "service": { "type": "string", "example": "video-upscaler-api" },
+          "uptimeSeconds": { "type": "integer" },
+          "renderer": { "$ref": "#/components/schemas/RendererStatus" },
+          "queue": { "$ref": "#/components/schemas/QueueStatus" },
+          "jobs": {
+            "type": "object",
+            "required": ["counts"],
+            "properties": {
+              "counts": {
+                "type": "object",
+                "description": "Number of jobs per status (all seven keys are always present).",
+                "additionalProperties": { "type": "integer" }
+              }
+            }
+          },
+          "thresholds": { "$ref": "#/components/schemas/Thresholds" },
+          "renderOptions": { "$ref": "#/components/schemas/RenderOptionsDescription" }
+        }
+      },
+      "RendererStatus": {
+        "type": "object",
+        "description": "Health of the Topaz Video AI renderer as seen by the last validation/self test.",
+        "required": [
+          "available",
+          "status",
+          "state",
+          "ffmpeg",
+          "ffprobe",
+          "tvaiUp",
+          "h264Nvenc",
+          "activeJobId"
+        ],
+        "properties": {
+          "available": { "type": "boolean", "description": "Shortcut for “can I upload now?”." },
+          "status": { "type": "string", "enum": ["available", "busy", "unavailable"] },
+          "state": { "type": "string", "enum": ["ready", "degraded", "unavailable", "unknown"] },
+          "ffmpeg": { "type": "boolean" },
+          "ffprobe": { "type": "boolean" },
+          "tvaiUp": { "type": "boolean", "description": "Topaz `tvai_up` filter present in the ffmpeg build." },
+          "h264Nvenc": { "type": "boolean", "description": "`h264_nvenc` encoder listed by the build." },
+          "nvencSelftest": {
+            "type": ["boolean", "null"],
+            "description": "Result of the last “encode one frame” self test."
+          },
+          "model": { "type": "string", "example": "prob-3" },
+          "modelSelftest": {
+            "type": ["boolean", "null"],
+            "description": "Result of the last Topaz model load check (`null` = not run)."
+          },
+          "version": { "type": ["string", "null"], "example": "7.1.git" },
+          "reason": { "type": ["string", "null"], "description": "Short explanation when degraded/unavailable." },
+          "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+          "activeJobId": { "type": ["string", "null"], "format": "uuid" }
+        }
+      },
+      "QueueStatus": {
+        "type": "object",
+        "description": "Execution queue state. The queue pauses itself while the renderer is unavailable and resumes automatically.",
+        "required": ["concurrency", "queued", "processing", "activeJobId", "activeCount", "paused"],
+        "properties": {
+          "concurrency": { "type": "integer", "const": 1, "description": "Always 1: a single GPU renderer." },
+          "queued": { "type": "integer", "description": "Jobs waiting to render." },
+          "processing": { "type": "boolean" },
+          "activeJobId": { "type": ["string", "null"], "format": "uuid" },
+          "activeCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+          "paused": { "type": "boolean" },
+          "pausedReason": { "type": ["string", "null"], "example": "renderer-unavailable" }
+        }
+      },
+      "Thresholds": {
+        "type": "object",
+        "description": "Server limits — use them for client-side validation instead of hardcoding values.",
+        "required": ["maxUploadSizeBytes", "minDimension", "maxDimension"],
+        "properties": {
+          "maxUploadSizeBytes": { "type": "integer", "example": 53687091200 },
+          "minDimension": { "type": "integer", "example": 16 },
+          "maxDimension": { "type": "integer", "example": 7680 }
+        }
+      },
+      "RenderOptions": {
+        "type": "object",
+        "description": "Resolved per-job render options. Every field defaults to the frozen Topaz baseline, so omitting all option fields reproduces the documented default command.",
+        "required": [
+          "model",
+          "device",
+          "vram",
+          "instances",
+          "topaz",
+          "encoder",
+          "audio",
+          "fps",
+          "filename",
+          "label"
+        ],
+        "properties": {
+          "model": { "type": "string", "example": "prob-3" },
+          "device": { "type": "integer", "minimum": 0, "example": 0 },
+          "vram": { "type": "integer", "enum": [0, 1], "example": 1 },
+          "instances": { "type": "integer", "minimum": 1, "maximum": 4, "example": 1 },
+          "topaz": { "$ref": "#/components/schemas/TopazParameters" },
+          "encoder": { "$ref": "#/components/schemas/EncoderOptions" },
+          "audio": {
+            "type": "string",
+            "enum": ["auto", "copy", "aac", "reencode", "none"],
+            "example": "auto"
+          },
+          "fps": {
+            "type": ["number", "null"],
+            "minimum": 1,
+            "maximum": 240,
+            "description": "Output frame rate (`fps=<value>` filter, frame duplication/dropping). `null` keeps the source frame rate.",
+            "example": 60
+          },
+          "filename": {
+            "type": ["string", "null"],
+            "description": "Sanitized client-provided output name without extension. When set, the render is named `<filename> <label>.mp4` instead of the automatic name.",
+            "example": "sosul eater rev"
+          },
+          "label": {
+            "type": ["string", "null"],
+            "description": "Name suffix used with `filename`. Defaults to the resolution class of the target resolution (4K / 1440p / 1080p / 720p / `WxH`). `null` when no custom filename was given.",
+            "example": "4K"
+          }
+        }
+      },
+      "TopazParameters": {
+        "type": "object",
+        "description": "`tvai_up` filter tunables (the resolution `w`/`h` is not part of this object).",
+        "required": ["preblur", "noise", "details", "halo", "blur", "compression", "blend"],
+        "properties": {
+          "preblur": { "type": "number", "minimum": -1, "maximum": 1, "example": -0.100659 },
+          "noise": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.25 },
+          "details": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.75 },
+          "halo": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.05 },
+          "blur": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.25 },
+          "compression": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.2 },
+          "blend": { "type": "number", "minimum": 0, "maximum": 1, "example": 0.6 }
+        }
+      },
+      "EncoderOptions": {
+        "type": "object",
+        "description": "`h264_nvenc` quality knobs.",
+        "required": ["qp", "preset"],
+        "properties": {
+          "qp": { "type": "integer", "minimum": 1, "maximum": 51, "example": 25 },
+          "preset": { "type": "string", "enum": ["p1", "p2", "p3", "p4", "p5", "p6", "p7"], "example": "p7" }
+        }
+      },
+      "RenderOptionsDescription": {
+        "type": "object",
+        "description": "Everything the frontend needs to build the render-options form: defaults, allowed values and ranges per field.",
+        "required": ["tuningEnabled", "defaults", "fields"],
+        "properties": {
+          "tuningEnabled": {
+            "type": "boolean",
+            "description": "When `false` the server only accepts `video`, `width` and `height` (strict baseline)."
+          },
+          "defaults": { "$ref": "#/components/schemas/RenderOptions" },
+          "fields": {
+            "type": "object",
+            "description": "Keyed by the multipart field name (model, device, vram, instances, preblur, noise, details, halo, blur, compression, blend, qp, preset, audio).",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["field", "type", "label", "defaultValue"],
+              "properties": {
+                "field": { "type": "string", "example": "qp" },
+                "type": { "type": "string", "enum": ["integer", "number", "string"] },
+                "label": { "type": "string" },
+                "defaultValue": {},
+                "allowed": { "type": "array", "items": { "type": "string" } },
+                "min": { "type": "number" },
+                "max": { "type": "number" },
+                "integer": { "type": "boolean" },
+                "booleanWordsAccepted": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "ApiErrorCode": {
+        "type": "string",
+        "description": "Stable machine-readable error code. Switch on this value, never on `message`.",
+        "enum": [
+          "VALIDATION_ERROR",
+          "UPLOAD_ERROR",
+          "UPLOAD_TOO_LARGE",
+          "INVALID_VIDEO",
+          "UNSUPPORTED_MEDIA_TYPE",
+          "JOB_NOT_FOUND",
+          "JOB_NOT_CANCELLABLE",
+          "JOB_NOT_COMPLETED",
+          "JOB_ALREADY_COMPLETED",
+          "JOB_ACTIVE",
+          "RENDERER_UNAVAILABLE",
+          "RENDERER_INTERRUPTED",
+          "FFMPEG_ERROR",
+          "FFPROBE_ERROR",
+          "FILESYSTEM_ERROR",
+          "OUTPUT_FILE_MISSING",
+          "INPUT_FILE_MISSING",
+          "METHOD_NOT_ALLOWED",
+          "NOT_FOUND",
+          "INTERNAL_ERROR",
+          "SERVICE_UNAVAILABLE"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "$ref": "#/components/schemas/ApiErrorCode" },
+          "message": { "type": "string", "example": "\"width\" must be an even number because the result is encoded as H.264 yuv420p." },
+          "details": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Optional, shape depends on the code (e.g. `{ field: \"width\" }`, `{ maxUploadSizeBytes: 53687091200 }`)."
+          }
+        }
+      },
+      "ApiErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "$ref": "#/components/schemas/ApiError" }
+        }
+      }
+    }
+  }
+}

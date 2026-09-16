@@ -8,6 +8,7 @@
  */
 
 const { errors } = require('../utils/errors');
+const { renderDescriptor } = require('../domain/job-serializer');
 
 function contentDisposition(filename) {
   const fallback = String(filename)
@@ -34,7 +35,7 @@ function parsePagination(query) {
 
 function createJobController({ jobService, uploadService }) {
   return {
-    /** POST /api/v1/jobs (multipart/form-data: video, width, height). */
+    /** POST /api/v1/jobs (multipart/form-data: video, width, height, render options). */
     async create(req, res) {
       const upload = await uploadService.receiveUpload(req);
       const { job, position } = await jobService.createFromUpload(upload);
@@ -44,6 +45,7 @@ function createJobController({ jobService, uploadService }) {
         position,
         width: job.width,
         height: job.height,
+        render: renderDescriptor(job),
       });
     },
 

@@ -8,6 +8,7 @@ const {
   buildAudioArguments,
   buildFfmpegArgs,
   buildFilterComplex,
+  buildFpsFilter,
   buildModelSelftestArgs,
   buildProbeArgs,
   buildScaleFilters,
@@ -30,6 +31,28 @@ function args(overrides = {}) {
     ...overrides,
   });
 }
+
+test('fps adds an optional frame-rate filter at the end of the chain', () => {
+  const baseline = args({ hasAudio: false });
+  const baselineFilter = baseline[baseline.indexOf('-filter_complex') + 1];
+  assert.equal(baselineFilter.endsWith('scale=out_color_matrix=bt709'), true);
+  assert.doesNotMatch(baselineFilter, /fps=/);
+
+  const withFps = args({ hasAudio: false, fps: 60 });
+  assert.match(
+    withFps[withFps.indexOf('-filter_complex') + 1],
+    /,scale=out_color_matrix=bt709,fps=60$/,
+  );
+
+  // Fractional NTSC rates survive, and only w/h/fps change in the chain.
+  const fractional = args({ hasAudio: false, fps: 59.94 });
+  assert.match(fractional[fractional.indexOf('-filter_complex') + 1], /,fps=59\.94$/);
+
+  assert.throws(() => args({ fps: 0 }), /fps must be a number between 1 and 240/);
+  assert.throws(() => args({ fps: 300 }), /fps must be a number between 1 and 240/);
+  assert.throws(() => args({ fps: '60' }), /fps must be a number between 1 and 240/);
+  assert.throws(() => buildFpsFilter(Number.NaN), /fps must be a number between 1 and 240/);
+});
 
 test('builds the Topaz baseline command as an argument vector (no shell string)', () => {
   const result = args({ hasAudio: true, audioCodec: 'aac' });

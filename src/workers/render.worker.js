@@ -26,9 +26,15 @@ const {
   formatBytes,
   renameWithRetry,
   reserveUniqueOutputPath,
+  resolutionLabel,
 } = require('../utils/filename');
 const { createTailBuffer, spawnProcess } = require('../utils/process');
 const { JOB_STATUS } = require('../domain/job-status');
+const {
+  readStoredRenderOptions,
+  summarizeRenderOptions,
+  toFilterParameters,
+} = require('../domain/render-options');
 
 const CLAIMABLE = [JOB_STATUS.QUEUED];
 const ACTIVE_FOR_TERMINAL = [
@@ -358,12 +364,19 @@ function createRenderWorker({
       });
     }
 
+    // Resolve the job's render options once: they drive both the output filename
+    // (model slug / client-provided name) and the ffmpeg arguments.
+    const options = readStoredRenderOptions(job, config, log);
+
+    const outputName = options.filename || null;
     const outputFilename = buildOutputFilename({
       originalFilename: job.original_filename,
       width: job.width,
       height: job.height,
-      model: config.topazModel,
+      model: options.model,
       extension: '.mp4',
+      outputName,
+      label: outputName ? options.label || resolutionLabel(job.width, job.height) : null,
     });
     const tempOutputPath = paths.tempOutputPath(jobId, '.mp4');
     await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
@@ -376,15 +389,20 @@ function createRenderWorker({
         outputPath: tempOutputPath,
         width: job.width,
         height: job.height,
-        model: config.topazModel,
+        model: options.model,
+        topaz: toFilterParameters(options),
+        encoder: options.encoder,
+        fps: options.fps,
         hasAudio: job.has_audio,
         audioCodec: job.audio_codec,
-        audioMode: config.audioMode,
+        audioMode: options.audio,
         bounds,
       });
     } catch (error) {
       return fail(jobId, isAppError(error) ? error.code : 'INTERNAL_ERROR', error.message, { log });
     }
+
+    log?.debug?.(`render options: ${summarizeRenderOptions(options, config)}`);
 
     log?.debug?.(`ffmpeg ${config.ffmpegPath} ${args.join(' ')}`);
 

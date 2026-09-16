@@ -11,6 +11,7 @@ const path = require('node:path');
 
 const { startTestServer, setRendererEnv } = require('../helpers/app');
 const { uploadVideo } = require('../helpers/multipart');
+const { assertResponseShape } = require('../helpers/openapi');
 
 const SMALL = [Buffer.alloc(4096, 0x41)];
 
@@ -160,7 +161,7 @@ test('GET /api/v1/jobs/:id returns the documented detail shape', async (t) => {
   const detail = await server.api(`/api/v1/jobs/${jobId}`);
   assert.equal(detail.status, 200);
   assert.deepEqual(Object.keys(detail.body).sort(), [
-    'error', 'id', 'input', 'output', 'progress', 'resolution', 'status', 'timestamps',
+    'error', 'id', 'input', 'output', 'progress', 'render', 'resolution', 'status', 'timestamps',
   ]);
   assert.equal(detail.body.id, jobId);
   assert.equal(detail.body.status, 'completed');
@@ -292,6 +293,94 @@ test('delete rules protect queued/active jobs and remove the row for finished on
   const missing = await server.api('/api/v1/jobs/does-not-exist', { method: 'DELETE' });
   assert.equal(missing.status, 404);
   assert.equal(missing.body.error.code, 'JOB_NOT_FOUND');
+});
+
+test('live responses match the documented schemas', async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.stop());
+
+  // /health
+  const health = await server.api('/health');
+  assertResponseShape(health.body, 'HealthResponse', { mode: 'exact', label: '/health' });
+
+  // /api/v1/system/status
+  const status = await server.api('/api/v1/system/status');
+  assertResponseShape(status.body, 'SystemStatusResponse', { mode: 'exact', label: 'system status' });
+  assertResponseShape(status.body.renderer, 'RendererStatus', { label: 'system status.renderer' });
+  assertResponseShape(status.body.queue, 'QueueStatus', { label: 'system status.queue' });
+  assertResponseShape(status.body.thresholds, 'Thresholds', { mode: 'exact', label: 'system status.thresholds' });
+  assertResponseShape(status.body.renderOptions, 'RenderOptionsDescription', {
+    mode: 'exact',
+    label: 'system status.renderOptions',
+  });
+  assertResponseShape(status.body.renderOptions.defaults, 'RenderOptions', {
+    mode: 'exact',
+    label: 'system status.renderOptions.defaults',
+  });
+  assertResponseShape(status.body.renderOptions.defaults.topaz, 'TopazParameters', {
+    mode: 'exact',
+    label: 'topaz parameters',
+  });
+  assertResponseShape(status.body.renderOptions.defaults.encoder, 'EncoderOptions', {
+    mode: 'exact',
+    label: 'encoder options',
+  });
+  assert.deepEqual(
+    Object.keys(status.body.jobs.counts).sort(),
+    ['cancel_requested', 'cancelled', 'completed', 'failed', 'probing', 'processing', 'queued'],
+  );
+
+  // POST /api/v1/jobs (202)
+  const created = await uploadVideo(server.baseUrl, {
+    fields: { width: 1280, height: 720 },
+    filename: 'docs shape.mp4',
+    chunks: [Buffer.alloc(2048, 0x42)],
+  });
+  assert.equal(created.status, 202);
+  assertResponseShape(created.body, 'CreateJobResponse', { mode: 'exact', label: 'create job' });
+  assertResponseShape(created.body.render, 'RenderOptions', { mode: 'exact', label: 'create job.render' });
+  const jobId = created.body.id;
+
+  // GET /api/v1/jobs/{id} in a non-terminal state
+  const running = await server.api(`/api/v1/jobs/${jobId}`);
+  assertResponseShape(running.body, 'JobDetail', { mode: 'exact', label: 'job detail (running)' });
+
+  // GET /api/v1/jobs/{id}/progress while processing and once completed
+  const liveProgress = await server.api(`/api/v1/jobs/${jobId}/progress`);
+  assertResponseShape(liveProgress.body, 'JobProgress', { label: 'progress (running)' });
+
+  await server.waitForStatus(jobId, 'completed');
+  const doneProgress = await server.api(`/api/v1/jobs/${jobId}/progress`);
+  assertResponseShape(doneProgress.body, 'JobProgress', { label: 'progress (completed)' });
+  assert.equal(doneProgress.body.completed, true);
+
+  const detail = await server.api(`/api/v1/jobs/${jobId}`);
+  assertResponseShape(detail.body, 'JobDetail', { mode: 'exact', label: 'job detail (completed)' });
+  assertResponseShape(detail.body.output, 'JobOutput', { mode: 'exact', label: 'output' });
+
+  // GET /api/v1/jobs
+  const list = await server.api('/api/v1/jobs?page=1&limit=5');
+  assertResponseShape(list.body, 'JobListResponse', { mode: 'exact', label: 'job list' });
+  assertResponseShape(list.body.data[0], 'JobSummary', { mode: 'exact', label: 'job summary' });
+  assertResponseShape(list.body.pagination, 'Pagination', { mode: 'exact', label: 'pagination' });
+
+  // POST /api/v1/jobs/{id}/cancel
+  const second = await uploadVideo(server.baseUrl, {
+    fields: { width: 1280, height: 720 },
+    chunks: [Buffer.alloc(2048, 0x43)],
+  });
+  const cancelled = await server.api(`/api/v1/jobs/${second.body.id}/cancel`, { method: 'POST' });
+  assertResponseShape(cancelled.body, 'JobDetail', { mode: 'exact', label: 'cancel response' });
+
+  // DELETE /api/v1/jobs/{id}
+  const deleted = await server.api(`/api/v1/jobs/${second.body.id}`, { method: 'DELETE' });
+  assertResponseShape(deleted.body, 'DeleteJobResponse', { mode: 'exact', label: 'delete response' });
+
+  // Error envelope
+  const missing = await server.api('/api/v1/jobs/00000000-0000-4000-8000-000000000000');
+  assert.equal(missing.status, 404);
+  assertResponseShape(missing.body, 'ApiErrorResponse', { mode: 'exact', label: 'error envelope' });
+  assertResponseShape(missing.body.error, 'ApiError', { label: 'error body' });
 });
 
 test('unknown routes and methods return the documented error envelope', async (t) => {

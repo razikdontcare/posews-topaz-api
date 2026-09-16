@@ -31,6 +31,20 @@ function errorDescriptor(job) {
   };
 }
 
+/**
+ * Resolved render options of a job (model, Topaz tunables, encoder quality,
+ * audio handling). `null` for jobs created before the option existed.
+ */
+function renderDescriptor(job) {
+  if (!job.render_options) return null;
+  try {
+    const parsed = JSON.parse(job.render_options);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function progressPercent(job, live) {
   if (live && Number.isFinite(live.progressPercent)) return live.progressPercent;
   if (job.status === JOB_STATUS.COMPLETED) return 100;
@@ -52,6 +66,7 @@ function toJobDetail(job, options = {}) {
       width: job.width,
       height: job.height,
     },
+    render: renderDescriptor(job),
     progress: {
       percent: progressPercent(job, live),
       frame: live && live.frame !== null ? live.frame : toNumberOrNull(job.frame),
@@ -103,4 +118,4 @@ function toProgressResponse(job, options = {}) {
   return payload;
 }
 
-module.exports = { toJobDetail, toJobSummary, toProgressResponse, outputDescriptor };
+module.exports = { toJobDetail, toJobSummary, toProgressResponse, outputDescriptor, renderDescriptor };

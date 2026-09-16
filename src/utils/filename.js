@@ -19,6 +19,11 @@ const WINDOWS_RESERVED_NAMES = new Set([
   'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
+/** Extensions that are dropped when a client supplies an output filename. */
+const STRIPPABLE_EXTENSIONS = new Set([
+  '.mp4', '.mkv', '.mov', '.webm', '.m4v', '.avi', '.ts', '.m2ts', '.mpg', '.mpeg',
+]);
+
 /** Strips any directory component (`..\..\evil.mp4` -> `evil.mp4`). */
 function stripDirectory(name) {
   const value = String(name ?? '');
@@ -72,7 +77,49 @@ function insertSuffix(filename, suffix) {
 }
 
 /**
+ * Consumer label for a target resolution, used in output filenames
+ * (`clip 4K.mp4`). Based on the longer side, so portrait renders keep the right
+ * label: 3840x1620 -> `4K`, 1080x1920 -> `1080p`, 640x360 -> `640x360`.
+ *
+ * @returns {string|null} `null` when the resolution cannot be interpreted
+ */
+function resolutionLabel(width, height) {
+  const w = Number(width);
+  const h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  const longest = Math.max(w, h);
+  if (longest >= 7680) return '8K';
+  if (longest >= 5120) return '5K';
+  if (longest >= 3840) return '4K';
+  if (longest >= 2560) return '1440p';
+  if (longest >= 1920) return '1080p';
+  if (longest >= 1280) return '720p';
+  return `${w}x${h}`;
+}
+
+/**
+ * Sanitizes a client-provided output filename: no directory components, no
+ * invalid characters, no extension (the renderer always produces mp4).
+ *
+ * @returns {string} the usable basename, or an empty string when nothing is left
+ */
+function sanitizeOutputName(name, { maxLength = 80 } = {}) {
+  // Trim first: `extname("clip.MP4 ")` would otherwise include the trailing space
+  // and the extension would not be recognized.
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) return '';
+  const base = stripDirectory(trimmed);
+  if (!base) return '';
+  const extension = path.extname(base).toLowerCase();
+  const withoutExtension = STRIPPABLE_EXTENSIONS.has(extension) ? removeExtension(base) : base;
+  return sanitizeFilename(withoutExtension, { fallback: '', maxLength });
+}
+
+/**
  * `sosul eater rev.mp4` + 3840x1620 -> `sosul eater rev_prob3_3840x1620.mp4`
+ *
+ * With a client-provided name the client's format is used instead:
+ * `sosul eater rev` + label `4K` -> `sosul eater rev 4K.mp4`.
  * The output container is always the ffmpeg muxer we configure (mp4).
  */
 function buildOutputFilename({
@@ -82,7 +129,17 @@ function buildOutputFilename({
   model = 'prob-3',
   extension = '.mp4',
   maxLength = 180,
+  outputName = null,
+  label = null,
 }) {
+  if (outputName) {
+    const stem = sanitizeOutputName(outputName, { maxLength: Math.max(16, maxLength - 24) });
+    if (stem) {
+      const suffix = sanitizeFilename(label || '', { fallback: '', maxLength: 24 });
+      return suffix ? `${stem} ${suffix}${extension}` : `${stem}${extension}`;
+    }
+  }
+
   const suffix = `_${modelSlug(model)}_${width}x${height}`;
   const stem = sanitizeFilename(removeExtension(stripDirectory(originalFilename)), {
     fallback: 'video',
@@ -164,7 +221,9 @@ module.exports = {
   removeExtension,
   renameWithRetry,
   reserveUniqueOutputPath,
+  resolutionLabel,
   sanitizeExtension,
   sanitizeFilename,
+  sanitizeOutputName,
   stripDirectory,
 };

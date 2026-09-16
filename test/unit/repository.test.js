@@ -48,8 +48,8 @@ function jobPayload(overrides = {}) {
 test('migrations create the jobs table, indexes and are idempotent', async () => {
   const fixture = await createFixture();
   try {
-    assert.deepEqual(fixture.migrations, [1]);
-    assert.equal(currentVersion(fixture.database), 1);
+    assert.deepEqual(fixture.migrations, [1, 2]);
+    assert.equal(currentVersion(fixture.database), 2);
 
     // Running them again must not throw nor re-apply anything.
     assert.deepEqual(runMigrations(fixture.database), []);
@@ -71,7 +71,7 @@ test('migrations create the jobs table, indexes and are idempotent', async () =>
     for (const expected of [
       'id', 'status', 'original_filename', 'input_path', 'output_path', 'temp_output_path',
       'width', 'height', 'duration_seconds', 'progress_percent', 'frame', 'fps', 'speed',
-      'elapsed_seconds', 'total_size', 'pid', 'error_code', 'error_message',
+      'elapsed_seconds', 'total_size', 'pid', 'error_code', 'error_message', 'render_options',
       'created_at', 'started_at', 'completed_at', 'updated_at',
     ]) {
       assert.ok(columns.includes(expected), `missing column ${expected}`);

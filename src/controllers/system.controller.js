@@ -4,6 +4,8 @@
  * Health and system status endpoints (AGENTS.md §23, §42).
  */
 
+const { describeRenderOptions } = require('../domain/render-options');
+
 function createSystemController({ config, repository, queue, renderService, rendererService, startedAt }) {
   function health(req, res) {
     res.json({
@@ -60,6 +62,8 @@ function createSystemController({ config, repository, queue, renderService, rend
         minDimension: config.minDimension,
         maxDimension: config.maxDimension,
       },
+      // Everything the frontend needs to build the render-options form.
+      renderOptions: describeRenderOptions(config),
     });
   }
 

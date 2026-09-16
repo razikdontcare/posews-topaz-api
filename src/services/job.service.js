@@ -19,6 +19,7 @@ const {
   isTerminalStatus,
 } = require('../domain/job-status');
 const { toJobDetail, toJobSummary, toProgressResponse } = require('../domain/job-serializer');
+const { summarizeRenderOptions } = require('../domain/render-options');
 
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
@@ -80,6 +81,7 @@ function createJobService({
         duration_seconds: media.durationSeconds,
         has_audio: media.hasAudio ? 1 : 0,
         audio_codec: media.audioCodec,
+        render_options: upload.renderOptions ? JSON.stringify(upload.renderOptions) : null,
         progress_percent: 0,
       });
     } catch (error) {
@@ -98,6 +100,9 @@ function createJobService({
         `${media.durationSeconds === null ? 'unknown duration' : `${media.durationSeconds.toFixed(2)}s`}, ` +
         `audio=${media.hasAudio ? media.audioCodec || 'yes' : 'none'})`,
     );
+    if (upload.renderOptions) {
+      log?.info?.(`options: ${summarizeRenderOptions(upload.renderOptions, config)}`);
+    }
 
     queue.enqueue(job.id);
     log?.info?.('queued');

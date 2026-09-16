@@ -20,6 +20,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { AppError, errors, toAppError } = require('../utils/errors');
 const { formatBytes, sanitizeExtension, stripDirectory } = require('../utils/filename');
+const { RENDER_OPTION_FIELDS, parseRenderOptions } = require('../domain/render-options');
 
 /**
  * Multipart framing (boundaries, headers, and the form fields themselves) is not
@@ -36,6 +37,9 @@ function parseContentLength(header) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
+
+/** Fields the endpoint understands: dimensions plus the render options (§22). */
+const ACCEPTED_FIELDS = new Set(['width', 'height', ...RENDER_OPTION_FIELDS]);
 
 function createUploadService({ config, paths, logger, Busboy = require('busboy') }) {
   const maxBytes = config.maxUploadSizeBytes;
@@ -120,10 +124,10 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
           limits: {
             fileSize: maxBytes,
             files: 1,
-            fields: 12,
+            fields: ACCEPTED_FIELDS.size + 4,
             fieldSize: 256,
             fieldNameSize: 64,
-            parts: 16,
+            parts: ACCEPTED_FIELDS.size + 6,
           },
         });
       } catch (error) {
@@ -317,7 +321,11 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
           fail(errors.validation(`Field "${key}" is too long.`, { field: key }));
           return;
         }
-        if (key === 'width' || key === 'height') fields[key] = value;
+        // Unknown fields are ignored on purpose (the response echoes the
+        // resolved options, so a typo is visible without breaking clients).
+        if (ACCEPTED_FIELDS.has(key) && fields[key] === undefined) {
+          fields[key] = value;
+        }
       });
 
       parser.on('filesLimit', () => fail(errors.validation('Only one video file per job is allowed.')));
@@ -352,15 +360,19 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
 
         let width;
         let height;
+        let renderOptions;
         try {
           width = parseDimension(fields.width, 'width');
           height = parseDimension(fields.height, 'height');
+          renderOptions = parseRenderOptions(fields, config, { width, height });
         } catch (error) {
           await discardUpload(entry);
           return settle(reject, error);
         }
 
-        jobLog?.info?.(`upload finished (${formatBytes(bytes)}, ${width}x${height})`);
+        jobLog?.info?.(
+          `upload finished (${formatBytes(bytes)}, ${width}x${height})`,
+        );
         return settle(resolve, {
           jobId: entry.jobId,
           originalFilename: entry.originalFilename,
@@ -371,6 +383,7 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
           bytes,
           width,
           height,
+          renderOptions,
         });
       });
 

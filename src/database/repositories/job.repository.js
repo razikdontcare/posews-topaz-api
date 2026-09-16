@@ -35,6 +35,7 @@ const COLUMNS = Object.freeze([
   'error_message',
   'has_audio',
   'audio_codec',
+  'render_options',
   'created_at',
   'started_at',
   'completed_at',

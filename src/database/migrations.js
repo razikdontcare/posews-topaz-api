@@ -37,6 +37,7 @@ const MIGRATIONS = [
           error_message     TEXT,
           has_audio         INTEGER,
           audio_codec       TEXT,
+          render_options    TEXT,
           created_at        TEXT NOT NULL,
           started_at        TEXT,
           completed_at      TEXT,
@@ -47,6 +48,18 @@ const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
         CREATE INDEX IF NOT EXISTS idx_jobs_status_created_at ON jobs(status, created_at);
       `);
+    },
+  },
+  {
+    version: 2,
+    name: 'add_render_options',
+    up(database) {
+      // Per-job render options (JSON): model, Topaz tunables, encoder quality,
+      // audio handling. Rows created before this migration keep the baseline.
+      const columns = database.all('PRAGMA table_info(jobs)').map((row) => row.name);
+      if (!columns.includes('render_options')) {
+        database.exec('ALTER TABLE jobs ADD COLUMN render_options TEXT');
+      }
     },
   },
 ];
