@@ -734,7 +734,7 @@
           "h264Nvenc": { "type": "boolean", "description": "`h264_nvenc` encoder listed by the build." },
           "nvencSelftest": {
             "type": ["boolean", "null"],
-            "description": "Result of the last “encode one frame” self test."
+            "description": "Result of the last NVENC self test, which encodes a test clip with the same encoder settings a render uses (`null` = not run). `false` means renders cannot succeed on this host."
           },
           "model": { "type": "string", "example": "prob-3" },
           "modelSelftest": {
@@ -742,7 +742,7 @@
             "description": "Result of the last Topaz model load check (`null` = not run)."
           },
           "version": { "type": ["string", "null"], "example": "7.1.git" },
-          "reason": { "type": ["string", "null"], "description": "Short explanation when degraded/unavailable." },
+          "reason": {"type": ["string", "null"], "description": "Operator-facing explanation when degraded/unavailable (quoted ffmpeg diagnostic, or a timeout notice). Never show it to end users — map `usable`/`available` to your own copy."},
           "checkedAt": { "type": ["string", "null"], "format": "date-time" },
           "activeJobId": { "type": ["string", "null"], "format": "uuid" }
         }

@@ -112,14 +112,20 @@ function printRendererHint(renderer) {
   }
   if (renderer.nvencSelftest === false) {
     console.log(
-      'Hint: the h264_nvenc self test failed — there is no usable NVIDIA driver/CUDA on this machine.',
+      'Hint: the h264_nvenc self test failed — the API could not open an NVENC session with the same',
     );
     console.log(
-      '      The Topaz tvai_up filter needs a working GPU device, so no render can succeed here.',
+      '      encoder settings a render uses. Read the "reason" line above (and the server log) for the',
     );
     console.log(
-      '      Fix the driver, or (development only) set RENDERER_SELFTEST=false or ' +
-        'ALLOW_DEGRADED_START=true to accept jobs anyway.',
+      '      ffmpeg error. If it says the driver/CUDA is missing the GPU is not usable by this process;',
+    );
+    console.log(
+      '      if it names unsupported dimensions or parameters, the probe — not the GPU — is the problem.',
+    );
+    console.log(
+      '      Development only: set ALLOW_DEGRADED_START=true to accept jobs anyway (they will fail at ' +
+        'render time).',
     );
     return;
   }
@@ -198,6 +204,9 @@ async function main() {
         `selftest=${status.renderer.nvencSelftest} ` +
         `model=${status.renderer.model}/${status.renderer.modelSelftest}`,
     );
+    if (status.renderer.reason) {
+      console.log(`reason   : ${status.renderer.reason}`);
+    }
 
     // The upload would be rejected with 503 RENDERER_UNAVAILABLE anyway, so say why
     // up front instead of leaving a mysterious failed job behind.

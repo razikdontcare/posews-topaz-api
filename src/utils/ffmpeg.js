@@ -98,6 +98,29 @@ const MP4_COPY_SAFE_AUDIO = new Set(['aac', 'mp3', 'ac3', 'eac3', 'opus', 'flac'
 const TOPAZ_FILTER_NAME = 'tvai_up';
 const NVENC_ENCODER_NAME = 'h264_nvenc';
 
+/**
+ * Geometry for the startup self tests.
+ *
+ * Deliberately not a tiny probe frame: NVENC only accepts frames inside its
+ * supported dimension/rate-control range, and a probe outside it fails on a
+ * healthy GPU. Both self tests therefore mirror the geometry and the encoder
+ * configuration of a real render (AGENTS.md §24), so their verdict predicts what
+ * a render will do.
+ */
+const SELFTEST_CLIP = Object.freeze({
+  /** Encoder self test: 640x360 @ 25 fps, 1.2 s of frames. */
+  width: 640,
+  height: 360,
+  rate: 25,
+  /** More frames than the encoder's `-rc-lookahead` so it can flush normally. */
+  frames: 30,
+  /** Model self test: a 2x upscale, like a normal request. */
+  modelInputWidth: 320,
+  modelInputHeight: 180,
+  modelWidth: 640,
+  modelHeight: 360,
+});
+
 const MODEL_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 
 function assertDimension(value, name, bounds) {
@@ -342,18 +365,26 @@ function buildFfmpegArgs(options) {
 }
 
 /** Builds the `tvai_up` arguments used for the startup model self test. */
-function buildModelSelftestArgs({ model, width = 128, height = 128, device = TOPAZ_FILTER_DEFAULTS.device } = {}) {
+function buildModelSelftestArgs({
+  model,
+  width = SELFTEST_CLIP.modelWidth,
+  height = SELFTEST_CLIP.modelHeight,
+  device = TOPAZ_FILTER_DEFAULTS.device,
+  input = `${SELFTEST_CLIP.modelInputWidth}x${SELFTEST_CLIP.modelInputHeight}`,
+} = {}) {
   return [
     '-hide_banner',
     '-nostdin',
     '-f',
     'lavfi',
     '-i',
-    'nullsrc=s=64x64',
+    `nullsrc=s=${input}`,
     '-frames:v',
-    '1',
+    String(SELFTEST_CLIP.frames),
+    // The same filter string a render uses, so a load failure here predicts a
+    // render failure instead of being an artifact of a stripped-down probe.
     '-filter_complex',
-    `tvai_up=model=${model}:scale=0:w=${width}:h=${height}:device=${device}:vram=1:instances=1`,
+    buildTvaiFilter({ width, height, model, parameters: { device } }),
     '-f',
     'null',
     '-',
@@ -378,18 +409,20 @@ const CAPABILITY_COMMANDS = Object.freeze({
   filters: ['-hide_banner', '-filters'],
   encoders: ['-hide_banner', '-encoders'],
   // Proves an NVENC session can actually be created (catches driver problems
-  // before the user uploads a multi-gigabyte file).
+  // before the user uploads a multi-gigabyte file). It encodes with the *exact*
+  // encoder block a render uses at a realistic frame size: a stripped-down probe
+  // (`-c:v h264_nvenc` on a 128x128 frame) disagrees with the real command on some
+  // drivers and would block a machine that renders perfectly well.
   selftest: [
     '-hide_banner',
     '-nostdin',
     '-f',
     'lavfi',
     '-i',
-    'nullsrc=s=128x128',
+    `nullsrc=s=${SELFTEST_CLIP.width}x${SELFTEST_CLIP.height}:r=${SELFTEST_CLIP.rate}`,
     '-frames:v',
-    '1',
-    '-c:v',
-    NVENC_ENCODER_NAME,
+    String(SELFTEST_CLIP.frames),
+    ...VIDEO_ENCODER_ARGUMENTS,
     '-f',
     'null',
     '-',

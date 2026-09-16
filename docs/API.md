@@ -1369,12 +1369,13 @@ with a generic error. Always start by calling `GET /api/v1/system/status`.
 | --- | --- | --- |
 | `POST /api/v1/jobs` → `503 RENDERER_UNAVAILABLE` | A self test failed *before* the upload started (`renderer.usable === false`) | Disable upload, show the outage banner, keep polling `system status` — the server re-checks in the background and starts accepting again on its own |
 | Job becomes `failed` with `RENDERER_UNAVAILABLE` | The render could not start (model missing, GPU lost) | Show as an operational error, not a user error; suggest retrying later |
-| `renderer.nvencSelftest === false` | No usable NVIDIA driver/CUDA on the render host (`Cannot load nvcuda.dll`) | Renders cannot succeed on this host at all — nobody can “fix it” from the UI |
-| `renderer.modelSelftest === false` | The configured Topaz model is not downloaded (`Model not found: prob-3`) | Renders cannot succeed until the operator opens Topaz Video AI once |
+| `renderer.nvencSelftest === false` | The API could not encode a test clip with the exact encoder settings a render uses — no usable NVIDIA driver/CUDA for this process, a hung GPU, or a session without GPU access | Renders cannot succeed on this host; nobody can fix it from the UI |
+| `renderer.modelSelftest === false` | The configured Topaz model could not be loaded (`Model not found: prob-3`) — usually the model was never downloaded, or the API's Windows account cannot read it | Renders cannot succeed until the operator fixes it |
 | `renderer.available === true`, `renderer.usable === false` | Server started with `ALLOW_DEGRADED_START=true` (development) | Jobs are accepted but every render fails — expect `failed` jobs |
 
-`renderer.reason` carries the operator-facing explanation (quoted ffmpeg diagnostics); it is **not**
-meant for end users. Map `renderer.usable` / `renderer.available` to your own copy.
+`renderer.reason` carries the operator-facing explanation: the ffmpeg diagnostic plus, for a timeout,
+how long the check ran. It is **not** meant for end users — map `renderer.usable` / `renderer.available`
+to your own copy, and expect the text to change.
 
 ### Recommended frontend checks
 

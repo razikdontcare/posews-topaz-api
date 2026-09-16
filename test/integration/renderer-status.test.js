@@ -8,8 +8,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
 
-const { startTestServer } = require('../helpers/app');
+const { setRendererEnv, startTestServer } = require('../helpers/app');
 const { uploadVideo } = require('../helpers/multipart');
 
 const SMALL = [Buffer.alloc(4096, 0x41)];
@@ -111,7 +113,6 @@ test('the renderer recovers by itself once the self test passes again', async (t
   assert.equal(rejected.status, 503);
 
   // The driver/model is fixed (or the GPU comes back) and the cooldown passes.
-  const { setRendererEnv } = require('../helpers/app');
   setRendererEnv({ FAKE_FFMPEG_MODE: 'success' });
   await new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -122,4 +123,60 @@ test('the renderer recovers by itself once the self test passes again', async (t
   const accepted = await uploadVideo(server.baseUrl, { fields: FIELDS, chunks: SMALL });
   assert.equal(accepted.status, 202);
   await server.waitForStatus(accepted.body.id, 'completed');
+});
+
+/*
+ * The probe must run the same encoder configuration as a render. The original
+ * probe (`-c:v h264_nvenc` on a single 128x128 frame) blocked a production machine
+ * whose renders worked, because NVENC refused the probe's geometry while accepting
+ * the real command.
+ */
+test('the NVENC self test spawns the same encoder block as a render', async (t) => {
+  const server = await startTestServer({ rendererSelftest: true });
+  const argsFile = path.join(server.root, 'ffmpeg-args.jsonl');
+  setRendererEnv({ FAKE_FFMPEG_ARGS_FILE: argsFile });
+  t.after(() => server.stop());
+
+  await server.rendererService.validate();
+
+  const invocations = (await fsp.readFile(argsFile, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const probe = invocations.filter((entry) => entry.kind === 'selftest').at(-1);
+  assert.ok(probe, 'the startup validation must run a self test probe');
+  assert.deepEqual(
+    probe.args.slice(probe.args.indexOf('-c:v'), probe.args.indexOf('-b:v') + 2),
+    [
+      '-c:v', 'h264_nvenc',
+      '-profile:v', 'high',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'p7',
+      '-tune', 'hq',
+      '-rc', 'constqp',
+      '-qp', '25',
+      '-rc-lookahead', '20',
+      '-spatial_aq', '1',
+      '-temporal_aq', '1',
+      '-aq-strength', '15',
+      '-b:v', '0',
+    ],
+  );
+  assert.equal(probe.args[probe.args.indexOf('-i') + 1], 'nullsrc=s=640x360:r=25');
+  assert.equal(probe.args.at(-1), '-');
+});
+
+test('a self test that never finishes is reported as a timeout, not an unknown error', async (t) => {
+  const server = await startTestServer({
+    rendererSelftest: true,
+    rendererSelftestTimeoutMs: 300,
+    rendererEnv: { FAKE_FFMPEG_MODE: 'hang' },
+  });
+  t.after(() => server.stop());
+
+  const { status } = server.init.validation;
+  assert.equal(status.nvencWorking, false);
+  assert.match(status.reason, /h264_nvenc self test failed/);
+  assert.match(status.reason, /did not finish within 300 ms/);
+  assert.doesNotMatch(status.reason, /unknown reason/);
 });

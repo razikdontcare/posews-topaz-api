@@ -32,6 +32,18 @@ function resolveCommand(executablePath, args) {
   return { command: executablePath, args: [...args], wrapped: false };
 }
 
+/**
+ * Human-readable command line for logs and diagnostics only — never executed.
+ * Quoting matches cmd.exe/PowerShell, so an operator can paste it to reproduce a
+ * failing probe (e.g. a startup self test) by hand.
+ */
+function formatCommand(executablePath, args = []) {
+  const { command, args: finalArgs } = resolveCommand(executablePath, args);
+  return [command, ...finalArgs]
+    .map((part) => (/[\s"]/.test(String(part)) ? `"${part}"` : String(part)))
+    .join(' ');
+}
+
 /** Keeps only the last `maxBytes` of a stream (used for ffmpeg stderr). */
 function createTailBuffer(maxBytes = 16384) {
   let buffer = Buffer.alloc(0);
@@ -335,6 +347,7 @@ function liveProcessPids() {
 module.exports = {
   createTailBuffer,
   DEFAULT_TASKKILL,
+  formatCommand,
   getProcessImageName,
   hasExited,
   isProcessAlive,

@@ -9,11 +9,14 @@
  *
  * Status levels:
  *   ready       - every check passed
- *   degraded    - binaries + tvai_up are fine, but the NVENC self test failed
- *                 (e.g. no NVIDIA driver); jobs are accepted and will surface the
- *                 real error if they cannot render
+ *   degraded    - binaries + tvai_up are fine, but a self test failed (no usable
+ *                 NVIDIA driver, Topaz model not downloaded); renders cannot work,
+ *                 so new uploads are rejected until the check passes again
  *   unavailable - fatal checks failed at startup or the renderer failed at
  *                 runtime (missing executable, killed process tree, ...)
+ *
+ * The self tests mirror the command a render runs (same encoder block, same
+ * `tvai_up` parameters) so a failure here really does predict a failed render.
  */
 
 const fs = require('node:fs');
@@ -25,6 +28,7 @@ const {
   hasFilter,
   summarizeStderr,
 } = require('../utils/ffmpeg');
+const { formatCommand } = require('../utils/process');
 
 const STATES = Object.freeze({
   READY: 'ready',
@@ -32,6 +36,26 @@ const STATES = Object.freeze({
   UNAVAILABLE: 'unavailable',
   UNKNOWN: 'unknown',
 });
+
+/**
+ * Turns a failed capability probe into a reason an operator can act on.
+ *
+ * A bare stderr summary is ambiguous: an empty one used to be reported as
+ * "unknown reason", which hides the difference between a hung GPU and an ffmpeg
+ * that exited silently — two problems with very different fixes.
+ */
+function describeProbeFailure(result, { label, timeoutMs }) {
+  if (result.spawnError) {
+    return `${label} could not be started: ${result.spawnError.message}`;
+  }
+  if (result.timedOut) {
+    return `${label} did not finish within ${timeoutMs} ms and was killed (the GPU may be hung)`;
+  }
+  return (
+    summarizeStderr(result.stderrTail, 400) ||
+    `${label} exited with code ${result.code} without any diagnostic output`
+  );
+}
 
 function createRendererService({ config, logger, runCommand, fileExists = defaultFileExists }) {
   let status = {
@@ -262,8 +286,16 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       });
       probe.nvencWorking = !selftest.spawnError && !selftest.timedOut && selftest.code === 0;
       if (!probe.nvencWorking) {
+        // The command is logged, never returned: it proves the probe matches what a
+        // render runs and lets the operator reproduce the failure by hand.
+        logger?.warn?.(
+          `NVENC self test command: ${formatCommand(config.ffmpegPath, CAPABILITY_COMMANDS.selftest)}`,
+        );
         renderBlocker.push(
-          `h264_nvenc self test failed: ${summarizeStderr(selftest.stderrTail, 400) || 'unknown reason'}`,
+          `h264_nvenc self test failed: ${describeProbeFailure(selftest, {
+            label: 'the NVENC check',
+            timeoutMs: config.rendererSelftestTimeoutMs,
+          })}`,
         );
       }
     }
@@ -280,7 +312,16 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       probe.modelWorking =
         !modelSelftest.spawnError && !modelSelftest.timedOut && modelSelftest.code === 0;
       if (!probe.modelWorking) {
-        const reason = summarizeStderr(modelSelftest.stderrTail, 400) || 'unknown reason';
+        const reason = describeProbeFailure(modelSelftest, {
+          label: 'the Topaz model check',
+          timeoutMs: config.rendererSelftestTimeoutMs,
+        });
+        logger?.warn?.(
+          `Topaz model self test command: ${formatCommand(
+            config.ffmpegPath,
+            buildModelSelftestArgs({ model: config.topazModel }),
+          )}`,
+        );
         renderBlocker.push(
           `Topaz model "${config.topazModel}" could not be loaded: ${reason}. ` +
             'Open Topaz Video AI once so it can download the model, or set TOPAZ_MODEL to an ' +

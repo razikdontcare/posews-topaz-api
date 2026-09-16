@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  CAPABILITY_COMMANDS,
   TOPAZ_FILTER_DEFAULTS,
   buildAudioArguments,
   buildFfmpegArgs,
@@ -203,8 +204,44 @@ test('probe and self test argument builders stay shell-free', () => {
 
   const selftest = buildModelSelftestArgs({ model: 'prob-3' });
   assert.ok(selftest.includes('-f'));
-  assert.match(selftest.join(' '), /tvai_up=model=prob-3:scale=0:w=128:h=128/);
+  // The model probe reuses the exact filter string a render builds.
+  const filter = selftest[selftest.indexOf('-filter_complex') + 1];
+  assert.equal(
+    filter,
+    buildTvaiFilter({ width: 640, height: 360, model: 'prob-3' }),
+    'the model self test must probe the same tvai_up parameters as a render',
+  );
+  assert.match(filter, /tvai_up=model=prob-3:scale=0:w=640:h=360:.*instances=1$/);
   assert.equal(selftest.at(-1), '-');
+});
+
+/*
+ * The startup NVENC probe used to encode a single 128x128 frame with bare encoder
+ * settings. That disagrees with a real render on some drivers (a production box
+ * that rendered fine was refused every upload), so the probe now has to replicate
+ * the real encoder block and a realistic frame geometry.
+ */
+test('the NVENC self test mirrors the encoder block a render uses', () => {
+  const selftest = CAPABILITY_COMMANDS.selftest;
+  const render = buildFfmpegArgs({
+    inputPath: 'C:\\VideoTemp\\x\\input.mp4',
+    outputPath: 'C:\\Hasil Render\\.x.rendering.mp4',
+    width: 640,
+    height: 360,
+    bounds: BOUNDS,
+  });
+
+  // Every encoder argument of a baseline render must appear in the probe, in order.
+  const encoderBlock = render.slice(render.indexOf('-c:v'), render.indexOf('-b:v') + 2);
+  const probeStart = selftest.indexOf('-c:v');
+  assert.deepEqual(selftest.slice(probeStart, probeStart + encoderBlock.length), encoderBlock);
+
+  // ...and it has to encode real frames at a size NVENC accepts.
+  const input = selftest[selftest.indexOf('-i') + 1];
+  assert.match(input, /^nullsrc=s=640x360:r=25$/);
+  assert.equal(selftest[selftest.indexOf('-frames:v') + 1], '30');
+  assert.equal(selftest.at(-1), '-');
+  assert.equal(selftest.at(-2), 'null');
 });
 
 test('summary and classification of ffmpeg failures', () => {
