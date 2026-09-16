@@ -486,19 +486,29 @@ function classifyFfmpegFailure(stderrTail, maxLength = 1000) {
     return { code: 'FFMPEG_ERROR', message: `FFmpeg ran out of GPU memory: ${summary}` };
   }
 
+  // A missing model and a filter that cannot initialise are both *renderer* problems:
+  // every following job would fail the same way, so the renderer is marked unusable
+  // (uploads get 503, queued jobs wait, and the periodic recheck enables it again).
   if (haystack.includes('model not found') || haystack.includes('unable to load model')) {
     return {
-      code: 'FFMPEG_ERROR',
+      code: 'RENDERER_UNAVAILABLE',
       message:
-        `Topaz model is not available: ${summary}. Open Topaz Video AI once to download the ` +
-        'model, then retry the job.',
+        `Topaz model is not available: ${summary}. Open Topaz Video AI once to download the model, ` +
+        'then retry the job.',
     };
   }
 
-  if (haystack.includes('tvai_up')) {
+  if (
+    haystack.includes('configure output pad') ||
+    haystack.includes('failed to inject frame into filter network') ||
+    haystack.includes('tvai_up')
+  ) {
     return {
-      code: 'FFMPEG_ERROR',
-      message: `Topaz filter failed: ${summary}`,
+      code: 'RENDERER_UNAVAILABLE',
+      message:
+        `The Topaz tvai_up filter could not start: ${summary}. This normally means the GPU device is ` +
+        'not usable (NVIDIA driver/CUDA) or the model could not be loaded — check the renderer self ' +
+        'test in GET /api/v1/system/status.',
     };
   }
 

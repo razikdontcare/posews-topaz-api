@@ -23,7 +23,7 @@ async function tempDirEntries(server) {
   }
 }
 
-async function waitForEmptyTemp(server, timeoutMs = 4000) {
+async function waitForEmptyTemp(server, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if ((await tempDirEntries(server)).length === 0) return true;

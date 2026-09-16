@@ -135,10 +135,18 @@ Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
 | `RENDERER_SELFTEST` | `true` | Encode one frame with `h264_nvenc` to verify the GPU/driver actually works. |
 | `RENDERER_MODEL_SELFTEST` | `true` | Try to load `TOPAZ_MODEL` once, so a missing model is reported at startup. |
 | `REQUIRE_NVENC` | `true` | Fail startup when `h264_nvenc` is missing from the build. |
-| `ALLOW_DEGRADED_START` | `false` | Start even if `ffmpeg`, `ffprobe` or `tvai_up` validation fails. |
+| `ALLOW_DEGRADED_START` | `false` | Start **and accept uploads** even when validation or a self test fails (those jobs will fail at render time). See the note below. |
+| `RENDERER_RECHECK_COOLDOWN_MS` | `60000` | How often an unusable renderer is re-validated in the background. |
 | `SINGLE_INSTANCE` | `true` | Refuse to start while another instance holds the GPU. |
 | `RENDERER_PROCESS_NAME` | `ffmpeg` | Process name checked before a leftover pid is force-killed. |
 | `HTTP_REQUEST_TIMEOUT_MS` | `0` | `0` = no limit (multi-hour uploads must not be cut off). |
+
+> **A failed self test is not a warning.** When `h264_nvenc` cannot be initialised (no NVIDIA driver)
+> or `TOPAZ_MODEL` cannot be loaded (model not downloaded), the renderer is reported as
+> `available: false, usable: false`: `POST /api/v1/jobs` answers `503 RENDERER_UNAVAILABLE`, the queue
+> pauses and keeps the existing jobs queued, and the server re-validates every
+> `RENDERER_RECHECK_COOLDOWN_MS` until the problem is gone. Set `ALLOW_DEGRADED_START=true` only on a
+> development machine: jobs are then accepted and fail with `RENDERER_UNAVAILABLE` immediately.
 
 ### Lifecycle, HTTP and logging
 
@@ -168,11 +176,33 @@ On startup the service:
 
 1. creates `TEMP_DIR`, `OUTPUT_DIR`, `DATA_DIR`, `LOGS_DIR` if needed,
 2. opens SQLite and applies migrations,
-3. validates the Topaz renderer (`ffmpeg`, `ffprobe`, `tvai_up`, `h264_nvenc`, GPU self test),
+3. validates the Topaz renderer (`ffmpeg`, `ffprobe`, `tvai_up`, `h264_nvenc`, GPU self test, model
+   load). A failed self test does not kill the process, but it does make the renderer unusable: uploads
+   are rejected with `503 RENDERER_UNAVAILABLE` and queued jobs wait instead of failing,
 4. recovers interrupted jobs: `processing`/`probing` → `failed` (*"Renderer interrupted by server
    restart"*), `cancel_requested` → `cancelled`, and every `queued` job is pushed back into the
    execution queue in creation order,
 5. starts listening on `PORT`.
+
+### Development machine without an NVIDIA GPU
+
+The Topaz `ffmpeg.exe` needs a working NVIDIA device (`tvai_up` = GPU upscaling, `h264_nvenc` =
+encoder), so on a laptop or CI box the self test fails with `Cannot load nvcuda.dll` and nothing can be
+rendered. This is detected at startup, not on the first upload:
+
+```bat
+npm run smoke
+```
+
+reports the renderer state and the exact reason, then stops before creating a job. To exercise the API
+and the UI flow without a GPU, run with a degraded start — jobs are accepted, queued, and fail with
+`RENDERER_UNAVAILABLE`:
+
+```bat
+set ALLOW_DEGRADED_START=true && npm start
+```
+
+For real renders, point the frontend at the machine that has the GPU and the Topaz models installed.
 
 ## 5. PM2 (production)
 
@@ -362,6 +392,7 @@ curl.exe http://localhost:3000/api/v1/system/status
   "status": "ok",
   "renderer": {
     "available": true,
+    "usable": true,
     "status": "busy",
     "ffmpeg": true,
     "ffprobe": true,
@@ -379,7 +410,9 @@ curl.exe http://localhost:3000/api/v1/system/status
 
 `renderer.status` is `available`, `busy` (a job is rendering) or `unavailable` (validation or
 runtime failure; while unavailable the queue pauses and new uploads are rejected with `503`
-`RENDERER_UNAVAILABLE`).
+`RENDERER_UNAVAILABLE`). `renderer.available` only answers “are new jobs accepted?” — `renderer.usable`
+is the deep answer, i.e. whether a render can actually succeed on this machine (`false` when the GPU
+encoder self test or the model load check failed, even though the binaries are present).
 
 ---
 
@@ -490,7 +523,7 @@ always come from the request.
 ## 9. Tests
 
 ```bat
-npm test                 :: everything (81 tests)
+npm test                 :: everything (121 tests)
 npm run test:unit        :: parser, argument builder, filenames, queue, repository, cleanup, lock
 npm run test:integration :: HTTP contract, streaming upload, worker lifecycle, restart recovery
 ```
@@ -508,7 +541,9 @@ npm run smoke
 ```
 
 `npm run smoke` generates a small clip, uploads it, polls progress, downloads the result and exits
-non-zero if no render was produced.
+non-zero if no render was produced. It first reads `/api/v1/system/status`, so on a machine without a
+GPU it reports the reason (`h264_nvenc` self test failed / model not downloaded) and stops before
+creating a doomed job.
 
 Covered: job creation, dimension validation, streaming upload + memory bound, size limit (both the
 `Content-Length` pre-check and the in-flight guard), invalid/audio-only files, queue ordering,
@@ -563,7 +598,8 @@ HTTP responses against the documented schemas.
 | A job is `failed` with *"Renderer interrupted by server restart"* | Expected after a crash/PM2 restart: interrupted renders are never resumed (they would restart from zero anyway), the uploaded input is kept for `FAILED_JOB_RETENTION_HOURS`. |
 | Leftover `.rendering.mp4` files in `D:\Hasil Render\` | Partially written renders from a crash; removed automatically once they are older than `TEMP_STALE_HOURS`. |
 | `EACCES` on startup / lock error | Another instance is running (`pm2 status`) or a stale `DATA_DIR\video-upscaler.lock` exists with a live pid. |
-| Port already in use | Change `PORT` or stop the other process (`netstat -ano \| findstr :3000`). |
+| Port already in use | Change `PORT` or stop the other process (`netstat -ano \| findstr :3000`). Note that any other local app can own port 3000 — `npm run smoke` detects that and tells you which service answered. |
+| `npm run smoke`: *"the API is not accepting jobs"* + *suggested `ALLOW_DEGRADED_START=true`* | Working as intended on a machine without a usable GPU/CUDA driver: the self test failed, so uploads are rejected before a job is created. Run against the render host, or use the degraded start for UI work. |
 
 Logs are grep-able per job:
 

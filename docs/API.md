@@ -39,7 +39,8 @@ upscaled result.
    * [Mapping codes to user-facing copy](#69-mapping-error-codes-to-user-facing-copy)
    * [Building the render-options form](#610-building-the-render-options-form)
 7. [Limits and defaults](#7-limits-and-defaults)
-8. [Stability & versioning](#8-stability--versioning)
+8. [Renderer availability & troubleshooting](#8-renderer-availability--troubleshooting)
+9. [Stability & versioning](#9-stability--versioning)
 
 ---
 
@@ -683,6 +684,7 @@ Use this to render an operational banner/status widget and to pre-validate uploa
   "uptimeSeconds": 84612,
   "renderer": {
     "available": true,
+    "usable": true,
     "status": "busy",
     "state": "ready",
     "ffmpeg": true,
@@ -753,10 +755,11 @@ Use this to render an operational banner/status widget and to pre-validate uploa
 | Field | Meaning |
 | --- | --- |
 | `renderer.status` | `available` (idle and healthy) · `busy` (a render is running) · `unavailable` (rejected uploads with `503`; the queue pauses) |
-| `renderer.state` | Detailed state: `ready` · `degraded` (works, but a self test failed — e.g. GPU driver issue) · `unavailable` · `unknown` |
-| `renderer.available` | Boolean shortcut for “can I upload now?” |
+| `renderer.state` | Detailed state: `ready` · `degraded` (at least one check failed — read `usable` to know whether renders work) · `unavailable` · `unknown` |
+| `renderer.available` | Boolean shortcut for “can I upload now?”. `false` → `POST /api/v1/jobs` answers `503 RENDERER_UNAVAILABLE`; the server re-validates in the background and flips back to `true` on its own. |
+| `renderer.usable` | `false` when a deep self test failed (GPU encoder self test or Topaz model load), which means **renders cannot succeed on this machine** even though the binaries are present. `available` mirrors this unless the server runs with `ALLOW_DEGRADED_START=true`, which accepts jobs that will fail at render time. |
 | `renderer.tvaiUp` / `h264Nvenc` | Filter/encoder present in the Topaz ffmpeg build. |
-| `renderer.nvencSelftest` / `modelSelftest` | `true`/`false`/`null` — the last self-test result (`null` = not run). |
+| `renderer.nvencSelftest` / `modelSelftest` | `true`/`false`/`null` — the last self-test result (`null` = not run, e.g. skipped because the previous check already failed). |
 | `renderer.reason` | Short explanation when degraded/unavailable; may be `null`. |
 | `queue.queued` | Jobs waiting (same as `jobs.counts.queued`). |
 | `queue.processing` | `true` while a render is active. |
@@ -977,6 +980,7 @@ export interface SystemStatusResponse {
   uptimeSeconds: number;
   renderer: {
     available: boolean;
+    usable: boolean;
     status: 'available' | 'busy' | 'unavailable';
     state: 'ready' | 'degraded' | 'unavailable' | 'unknown';
     ffmpeg: boolean;
@@ -1229,8 +1233,13 @@ async function pollSystemStatus(onChange: (status: SystemStatusResponse) => void
 Suggested rules:
 
 * `renderer.available === false` → block the upload button and show “renderer is offline”.
-* `renderer.state === 'degraded'` → allow uploads but warn (“a renderer self test failed; renders
-  may fail”).
+* `renderer.usable === false` → uploads will be rejected (or, with `ALLOW_DEGRADED_START=true`, will fail
+  at render time): warn that the renderer needs attention. On a workstation without an NVIDIA GPU
+  (`renderer.nvencSelftest === false`) or without the Topaz model downloaded
+  (`renderer.modelSelftest === false`), no render can succeed — this is an environment problem, not
+  something the user can retry away.
+* `renderer.state === 'degraded'` → run the `usable` check first: `degraded` + `usable` means renders
+  still work (e.g. only a self test was skipped).
 * `queue.paused === true` → queued jobs will not start until the renderer is back; keep the queue
   view, do not tell users their jobs were lost.
 * `queue.queued > 0` with `queue.processing === false` → the queue is stalled; show an operational
@@ -1348,7 +1357,62 @@ unfinished job never blocks the UI — it is the server that owns the work.
 
 ---
 
-## 8. Stability & versioning
+## 8. Renderer availability & troubleshooting
+
+The renderer is a **single GPU bound by one binary**: the Topaz Video AI `ffmpeg.exe`. It is normal for
+it to be missing or broken on a developer machine, and the API says so explicitly instead of failing
+with a generic error. Always start by calling `GET /api/v1/system/status`.
+
+### What the API does when the renderer is not usable
+
+| Symptom | Cause | Frontend behaviour |
+| --- | --- | --- |
+| `POST /api/v1/jobs` → `503 RENDERER_UNAVAILABLE` | A self test failed *before* the upload started (`renderer.usable === false`) | Disable upload, show the outage banner, keep polling `system status` — the server re-checks in the background and starts accepting again on its own |
+| Job becomes `failed` with `RENDERER_UNAVAILABLE` | The render could not start (model missing, GPU lost) | Show as an operational error, not a user error; suggest retrying later |
+| `renderer.nvencSelftest === false` | No usable NVIDIA driver/CUDA on the render host (`Cannot load nvcuda.dll`) | Renders cannot succeed on this host at all — nobody can “fix it” from the UI |
+| `renderer.modelSelftest === false` | The configured Topaz model is not downloaded (`Model not found: prob-3`) | Renders cannot succeed until the operator opens Topaz Video AI once |
+| `renderer.available === true`, `renderer.usable === false` | Server started with `ALLOW_DEGRADED_START=true` (development) | Jobs are accepted but every render fails — expect `failed` jobs |
+
+`renderer.reason` carries the operator-facing explanation (quoted ffmpeg diagnostics); it is **not**
+meant for end users. Map `renderer.usable` / `renderer.available` to your own copy.
+
+### Recommended frontend checks
+
+```ts
+const { renderer, queue } = await (await fetch(`${API_BASE}/api/v1/system/status`)).json();
+
+const canUpload = renderer.available;              // drives the upload button
+const outageNotice = renderer.usable
+  ? null
+  : 'The video renderer is offline — rendering is unavailable right now.';
+const busyNotice = queue.processing ? 'The renderer is busy; your job will start automatically.' : null;
+```
+
+### Local development without a GPU
+
+Two supported options, both decided by the backend operator (not the client):
+
+1. **Point the frontend at the render host** — production behaviour, with real renders.
+2. **Run a local instance with `ALLOW_DEGRADED_START=true`** — the API accepts jobs, the queue runs
+   them, and they fail almost immediately with `RENDERER_UNAVAILABLE`. This exercises the full UI flow
+   (upload → queue → progress → error → retry) without a GPU. Polling, cancellation and deletion all
+   behave exactly as in production.
+
+Because the API never depends on the browser, an upload that is *accepted* keeps progressing even if
+the browser is closed, reloaded or crashes — see [6.5](#65-resuming-after-a-reload--browser-was-closed).
+
+### Distinguishing frontend bugs from environment problems
+
+* `400 VALIDATION_ERROR` / `413 UPLOAD_TOO_LARGE` / `415 UNSUPPORTED_MEDIA_TYPE` → **frontend**: the
+  request did not match the documented form; re-read `thresholds` from `system status`.
+* `503 RENDERER_UNAVAILABLE` / `SERVICE_UNAVAILABLE` → **environment**: retry with backoff, show an
+  outage state.
+* `500 INTERNAL_ERROR` / `FFMPEG_ERROR` → **server**: log and surface the `x-request-id` response
+  header ([§2](#headers)) so the operator can find the matching log lines.
+
+---
+
+## 9. Stability & versioning
 
 **Contractual** (safe to depend on): every field documented above, the error envelope and its codes,
 HTTP status codes, the job status values, and the semantics of the endpoints. Breaking changes will

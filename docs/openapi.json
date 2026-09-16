@@ -708,6 +708,7 @@
         "description": "Health of the Topaz Video AI renderer as seen by the last validation/self test.",
         "required": [
           "available",
+          "usable",
           "status",
           "state",
           "ffmpeg",
@@ -717,9 +718,16 @@
           "activeJobId"
         ],
         "properties": {
-          "available": { "type": "boolean", "description": "Shortcut for “can I upload now?”." },
+          "available": {
+            "type": "boolean",
+            "description": "Whether new jobs are accepted. `false` → `POST /api/v1/jobs` answers `503 RENDERER_UNAVAILABLE` (the server keeps re-validating and starts accepting again by itself)."
+          },
+          "usable": {
+            "type": "boolean",
+            "description": "Result of the deep self tests: `false` when the GPU encoder self test or the model load check failed, which means renders cannot succeed on this machine."
+          },
           "status": { "type": "string", "enum": ["available", "busy", "unavailable"] },
-          "state": { "type": "string", "enum": ["ready", "degraded", "unavailable", "unknown"] },
+          "state": { "type": "string", "enum": ["ready", "degraded", "unavailable", "unknown"], "description": "`ready` = every check passed · `degraded` = a self test failed, so renders will most likely fail · `unavailable` = binaries/filter missing or a runtime failure." },
           "ffmpeg": { "type": "boolean" },
           "ffprobe": { "type": "boolean" },
           "tvaiUp": { "type": "boolean", "description": "Topaz `tvai_up` filter present in the ffmpeg build." },

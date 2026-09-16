@@ -15,6 +15,10 @@
  *
  * `--<option>=<value>` arguments are forwarded to the API as render options, which
  * makes it easy to check a tuned command on the render machine.
+ *
+ * It first reads `/api/v1/system/status` and stops with an explanation when the renderer is not
+ * usable (no NVIDIA driver, model not downloaded), so a GPU-less development machine reports the
+ * reason instead of leaving a failed job behind. Exit code is 0 only when a render completed.
  */
 
 const { spawn } = require('node:child_process');
@@ -91,9 +95,88 @@ async function upload(filePath) {
   const response = await fetch(`${baseUrl}/api/v1/jobs`, { method: 'POST', body: form });
   const body = await response.json();
   if (!response.ok) {
-    throw new Error(`upload failed (${response.status}): ${JSON.stringify(body)}`);
+    const error = new Error(`upload failed (${response.status}): ${JSON.stringify(body)}`);
+    error.code = body?.error?.code;
+    throw error;
   }
   return body;
+}
+
+/** Explains the most common environment problems instead of guessing. */
+function printRendererHint(renderer) {
+  if (renderer.ffmpeg === false || renderer.ffprobe === false) {
+    const missing = renderer.ffmpeg === false ? 'ffmpeg' : 'ffprobe';
+    console.log(`Hint: the Topaz ${missing} executable could not be run. Check FFMPEG_PATH /`);
+    console.log('      FFPROBE_PATH and that Topaz Video AI is installed.');
+    return;
+  }
+  if (renderer.nvencSelftest === false) {
+    console.log(
+      'Hint: the h264_nvenc self test failed — there is no usable NVIDIA driver/CUDA on this machine.',
+    );
+    console.log(
+      '      The Topaz tvai_up filter needs a working GPU device, so no render can succeed here.',
+    );
+    console.log(
+      '      Fix the driver, or (development only) set RENDERER_SELFTEST=false or ' +
+        'ALLOW_DEGRADED_START=true to accept jobs anyway.',
+    );
+    return;
+  }
+  if (renderer.modelSelftest === false) {
+    console.log(
+      `Hint: the Topaz model "${renderer.model}" could not be loaded. Open Topaz Video AI once so it ` +
+        'can download the model, then retry (or set TOPAZ_MODEL to an installed model).',
+    );
+    return;
+  }
+  if (renderer.tvaiUp === false) {
+    console.log(
+      `Hint: the tvai_up filter is missing from ${config.ffmpegPath} — this is not a Topaz build.`,
+    );
+    return;
+  }
+  if (renderer.available === false) {
+    console.log(`Hint: the renderer is unavailable (${renderer.reason || renderer.state}).`);
+    return;
+  }
+  console.log(
+    'Hint: the renderer reported itself as usable, so check the job error above and the server log ' +
+      'for the ffmpeg diagnostic output.',
+  );
+}
+
+/**
+ * Fetches `/health` and proves it is *our* service: the default port is often taken
+ * by an unrelated local app, which produces very confusing failures.
+ */
+async function fetchHealth(url) {
+  let response;
+  try {
+    response = await fetch(`${url}/health`);
+  } catch (error) {
+    throw expectedError(
+      `cannot reach ${url}/health (${error.cause?.code || error.message}). ` +
+        'Is the API running? Start it with: npm start',
+    );
+  }
+
+  const body = await response.json().catch(() => null);
+  if (body?.service !== 'video-upscaler-api') {
+    throw expectedError(
+      `${url}/health answered ${JSON.stringify(body)}, which is not this API — another ` +
+        'application is listening on that port. Pass the right base URL, e.g. ' +
+        'npm run smoke -- http://127.0.0.1:<PORT>',
+    );
+  }
+  return body;
+}
+
+/** An environment problem the operator can fix: reported without a stack trace. */
+function expectedError(message) {
+  const error = new Error(message);
+  error.expected = true;
+  return error;
 }
 
 async function main() {
@@ -104,16 +187,26 @@ async function main() {
     console.log(`service  : ${baseUrl}`);
     console.log(`ffmpeg   : ${config.ffmpegPath}`);
 
-    const health = await (await fetch(`${baseUrl}/health`)).json();
+    const health = await fetchHealth(baseUrl);
     console.log(`health   : ${JSON.stringify(health)}`);
 
     const status = await (await fetch(`${baseUrl}/api/v1/system/status`)).json();
     console.log(
-      `renderer : state=${status.renderer.state} ffmpeg=${status.renderer.ffmpeg} ` +
-        `ffprobe=${status.renderer.ffprobe} tvai_up=${status.renderer.tvaiUp} ` +
-        `h264_nvenc=${status.renderer.h264Nvenc} selftest=${status.renderer.nvencSelftest} ` +
+      `renderer : state=${status.renderer.state} usable=${status.renderer.usable} ` +
+        `ffmpeg=${status.renderer.ffmpeg} ffprobe=${status.renderer.ffprobe} ` +
+        `tvai_up=${status.renderer.tvaiUp} h264_nvenc=${status.renderer.h264Nvenc} ` +
+        `selftest=${status.renderer.nvencSelftest} ` +
         `model=${status.renderer.model}/${status.renderer.modelSelftest}`,
     );
+
+    // The upload would be rejected with 503 RENDERER_UNAVAILABLE anyway, so say why
+    // up front instead of leaving a mysterious failed job behind.
+    if (!status.renderer.available) {
+      console.log('\nSmoke test SKIPPED — the API is not accepting jobs right now.');
+      printRendererHint(status.renderer);
+      process.exitCode = 1;
+      return;
+    }
 
     const size = await createFixture(fixture);
     console.log(`fixture  : ${path.basename(fixture)} (${size} bytes)`);
@@ -121,7 +214,16 @@ async function main() {
       `options  : ${Object.keys(renderOptions).length > 0 ? JSON.stringify(renderOptions) : 'baseline (none)'}`,
     );
 
-    const created = await upload(fixture);
+    const created = await upload(fixture).catch((error) => {
+      console.log(`upload   : FAILED — ${error.message}`);
+      return null;
+    });
+    if (!created) {
+      printRendererHint(status.renderer || {});
+      console.log('\nSmoke test did NOT start a render.');
+      process.exitCode = 1;
+      return;
+    }
     console.log(`created  : ${JSON.stringify({ ...created, render: undefined })}`);
     console.log(`render   : ${JSON.stringify(created.render)}`);
 
@@ -163,6 +265,7 @@ async function main() {
     }
 
     console.log('\nSmoke test did NOT produce a render (see the job error above).');
+    printRendererHint(status.renderer || {});
     process.exitCode = 1;
   } finally {
     await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -170,6 +273,10 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`smoke test failed: ${error.stack || error.message}`);
+  console.error(
+    error.expected
+      ? `smoke test failed: ${error.message}`
+      : `smoke test failed: ${error.stack || error.message}`,
+  );
   process.exitCode = 1;
 });

@@ -103,17 +103,31 @@ async function initialize({ container, config, logger }) {
   result.validation = {
     ok: validation.ok,
     state: validation.state,
+    usable: validation.usable,
+    available: validation.status.available,
+    status: validation.status,
     fatalErrors: validation.fatalErrors,
     warnings: validation.warnings,
   };
   for (const warning of validation.warnings) {
     logger.warn(`renderer: ${warning}`);
   }
-  if (validation.ok) {
+  if (validation.ok && !validation.status.available) {
+    // Validation passed but a self test failed: the renderer cannot produce output.
+    logger.error(
+      `renderer is NOT usable for rendering: ${validation.status.reason || 'self test failed'}`,
+    );
+    logger.error(
+      'New uploads are rejected with 503 RENDERER_UNAVAILABLE and queued jobs stay queued until ' +
+        'the renderer passes its self test again (retried every ' +
+        `${Math.round(config.rendererRecheckCooldownMs / 1000)}s). Set ALLOW_DEGRADED_START=true ` +
+        'to accept jobs anyway (they will fail at render time).',
+    );
+  } else if (validation.ok) {
     logger.info(
       `renderer ready: ffmpeg ${validation.status.version || '(version unknown)'} ` +
         `tvai_up=${validation.status.tvaiUp} h264_nvenc=${validation.status.h264Nvenc} ` +
-        `selftest=${validation.status.nvencWorking}`,
+        `selftest=${validation.status.nvencWorking} model=${validation.status.modelWorking}`,
     );
   } else {
     for (const fatal of validation.fatalErrors) logger.error(fatal);

@@ -53,9 +53,12 @@ async function startTestServer(rawOverrides = {}) {
     root: reusedRoot,
     preserveRoot = false,
     logger: loggerOverride,
+    rendererEnv,
     ...overrides
   } = rawOverrides;
   resetRendererEnv();
+  // Environment for the fake renderer *before* startup validation runs.
+  if (rendererEnv) setRendererEnv(rendererEnv);
   const root = reusedRoot || path.join(os.tmpdir(), `vua-test-${randomUUID()}`);
   const dirs = {
     temp: path.join(root, 'temp'),

@@ -33,10 +33,21 @@ function parsePagination(query) {
   return { page, limit };
 }
 
-function createJobController({ jobService, uploadService }) {
+function createJobController({ jobService, uploadService, rendererService }) {
   return {
     /** POST /api/v1/jobs (multipart/form-data: video, width, height, render options). */
     async create(req, res) {
+      // Reject before reading a single byte: a renderer that cannot render must not
+      // accept multi-gigabyte uploads that are doomed to fail. The server keeps
+      // re-validating in the background and starts accepting jobs again by itself.
+      if (rendererService && !rendererService.isAvailable()) {
+        const status = rendererService.getStatus();
+        throw errors.rendererUnavailable(
+          `The video renderer is not available (${status.reason || status.state}) and no jobs are ` +
+            'accepted right now. See GET /api/v1/system/status for details.',
+        );
+      }
+
       const upload = await uploadService.receiveUpload(req);
       const { job, position } = await jobService.createFromUpload(upload);
       res.status(202).json({

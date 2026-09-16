@@ -33,6 +33,8 @@ function createSystemController({ config, repository, queue, renderService, rend
       uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
       renderer: {
         available: renderer.available,
+        /** False when a self test failed: renders would fail. */
+        usable: renderer.usable,
         status: rendererState,
         state: renderer.state,
         ffmpeg: renderer.ffmpeg,

@@ -221,13 +221,25 @@ test('summary and classification of ffmpeg failures', () => {
   assert.match(summary, /Model not found: prob-3/);
   assert.doesNotMatch(summary, /Task finished with error code/);
   assert.doesNotMatch(summary, /Conversion failed/);
-
   const modelFailure = classifyFfmpegFailure(tail, 400);
-  assert.equal(modelFailure.code, 'FFMPEG_ERROR');
+  assert.equal(modelFailure.code, 'RENDERER_UNAVAILABLE');
   assert.match(modelFailure.message, /Topaz model is not available/);
 
   const nvenc = classifyFfmpegFailure('[h264_nvenc @ 0] Cannot load nvcuda.dll\nConversion failed!');
   assert.equal(nvenc.code, 'RENDERER_UNAVAILABLE');
+
+  // A filter that cannot initialise is a renderer problem too (the smoke test hit
+  // this on a machine without a usable NVIDIA device).
+  const filterInit = classifyFfmpegFailure(
+    [
+      '[Parsed_tvai_up_0 @ 000001C79821B000] Failed to configure output pad on Parsed_tvai_up_0',
+      '[fc#0 @ 000001C7948DCA80] Failed to inject frame into filter network: Invalid argument',
+      'Error while processing the decoded data for stream #0:0',
+    ].join('\n'),
+  );
+  assert.equal(filterInit.code, 'RENDERER_UNAVAILABLE');
+  assert.match(filterInit.message, /tvai_up filter could not start/);
+  assert.match(filterInit.message, /system\/status/);
 
   const unknown = classifyFfmpegFailure('something odd happened');
   assert.equal(unknown.code, 'FFMPEG_ERROR');

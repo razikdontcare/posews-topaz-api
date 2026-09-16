@@ -27,6 +27,7 @@ test('health and system status endpoints', async (t) => {
   const status = await server.api('/api/v1/system/status');
   assert.equal(status.status, 200);
   assert.equal(status.body.renderer.available, true);
+  assert.equal(status.body.renderer.usable, true);
   assert.equal(status.body.renderer.ffmpeg, true);
   assert.equal(status.body.renderer.ffprobe, true);
   assert.equal(status.body.renderer.tvaiUp, true);
@@ -193,6 +194,17 @@ test('failed renders expose a structured error', async (t) => {
   const failed = await server.waitForStatus(jobId, 'failed');
   assert.equal(failed.error_code, 'RENDERER_UNAVAILABLE');
   assert.match(failed.error_message, /Cannot load nvcuda\.dll/);
+
+  // A renderer problem marks the renderer unusable: uploads are then rejected and
+  // the queue pauses instead of running doomed jobs.
+  const status = await server.api('/api/v1/system/status');
+  assert.equal(status.body.renderer.available, false);
+  assert.equal(status.body.renderer.status, 'unavailable');
+
+  const rejected = await uploadVideo(server.baseUrl, { fields: { width: 1280, height: 720 }, chunks: SMALL });
+  assert.equal(rejected.status, 503);
+  assert.equal(rejected.body.error.code, 'RENDERER_UNAVAILABLE');
+  assert.match(rejected.body.error.message, /renderer is not available/i);
 
   const detail = await server.api(`/api/v1/jobs/${jobId}`);
   assert.equal(detail.body.error.code, 'RENDERER_UNAVAILABLE');

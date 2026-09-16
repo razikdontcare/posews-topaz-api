@@ -37,6 +37,8 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
   let status = {
     state: STATES.UNKNOWN,
     available: false,
+    /** False when a self test failed: the renderer cannot produce output. */
+    usable: false,
     ffmpeg: false,
     ffprobe: false,
     tvaiUp: false,
@@ -59,15 +61,22 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     return status.available;
   }
 
+  /** True when the last validation proved the renderer can actually render. */
+  function isUsable() {
+    return status.usable;
+  }
+
   function markUnavailable(reason) {
     logger?.warn?.(`renderer marked unavailable: ${reason}`);
     status = {
       ...status,
       state: STATES.UNAVAILABLE,
       available: false,
+      usable: false,
       reason,
       checkedAt: new Date().toISOString(),
     };
+    lastCheckAt = Date.now();
     return snapshot();
   }
 
@@ -76,9 +85,11 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       ...status,
       state: STATES.READY,
       available: true,
+      usable: true,
       reason: null,
       checkedAt: new Date().toISOString(),
     };
+    lastCheckAt = Date.now();
     return snapshot();
   }
 
@@ -242,13 +253,16 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     }
 
     // 7. deep check: can an NVENC session actually be created?
+    //    A failure here means renders cannot work at all, so it does not just
+    //    warn: the renderer stops accepting jobs (see `available` below).
+    const renderBlocker = [];
     if (config.rendererSelftest && probe.h264Nvenc) {
       const selftest = await runCommand(config.ffmpegPath, CAPABILITY_COMMANDS.selftest, {
         timeoutMs: config.rendererSelftestTimeoutMs,
       });
       probe.nvencWorking = !selftest.spawnError && !selftest.timedOut && selftest.code === 0;
       if (!probe.nvencWorking) {
-        warnings.push(
+        renderBlocker.push(
           `h264_nvenc self test failed: ${summarizeStderr(selftest.stderrTail, 400) || 'unknown reason'}`,
         );
       }
@@ -267,7 +281,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         !modelSelftest.spawnError && !modelSelftest.timedOut && modelSelftest.code === 0;
       if (!probe.modelWorking) {
         const reason = summarizeStderr(modelSelftest.stderrTail, 400) || 'unknown reason';
-        warnings.push(
+        renderBlocker.push(
           `Topaz model "${config.topazModel}" could not be loaded: ${reason}. ` +
             'Open Topaz Video AI once so it can download the model, or set TOPAZ_MODEL to an ' +
             'installed model.',
@@ -275,13 +289,20 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       }
     }
 
-    const state = warnings.length > 0 ? STATES.DEGRADED : STATES.READY;
+    warnings.push(...renderBlocker);
+
+    // A failed self test does not stop the process (the operator needs the status
+    // endpoint and the logs to diagnose it), but the renderer is not *usable*: new
+    // uploads are rejected with 503 and queued jobs wait instead of failing.
+    const usable = renderBlocker.length === 0;
+    const state = renderBlocker.length > 0 ? STATES.DEGRADED : warnings.length > 0 ? STATES.DEGRADED : STATES.READY;
     status = {
       ...status,
       state,
-      available: true,
+      available: usable || config.allowDegradedStart,
+      usable,
       ...probe,
-      reason: warnings[0] || null,
+      reason: renderBlocker[0] || warnings[0] || null,
       checkedAt: new Date().toISOString(),
       warnings,
     };
@@ -289,6 +310,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     return {
       ok: true,
       state,
+      usable,
       fatalErrors,
       warnings,
       status: snapshot(),
@@ -296,20 +318,19 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
   }
 
   /**
-   * Gate used by the queue/worker: re-validates at most once per cooldown while
-   * unavailable, so a fixed driver/Topaz install is picked up automatically.
+   * Gate used by the queue, the worker and the upload endpoint: re-validates at
+   * most once per cooldown while the renderer is not usable, so a fixed
+   * driver/model is picked up automatically.
    */
   async function ensureAvailable() {
     if (status.available) return true;
     const since = Date.now() - lastCheckAt;
-    if (status.state === STATES.UNAVAILABLE && since < config.rendererRecheckCooldownMs) {
-      return false;
-    }
+    if (since < config.rendererRecheckCooldownMs) return false;
     const result = await validate();
-    if (result.ok) {
+    if (result.ok && result.usable) {
       logger?.info?.('renderer is available again');
     }
-    return result.ok;
+    return status.available;
   }
 
   return {
@@ -317,6 +338,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     ensureAvailable,
     getStatus: snapshot,
     isAvailable,
+    isUsable,
     markReady,
     markUnavailable,
     validate,

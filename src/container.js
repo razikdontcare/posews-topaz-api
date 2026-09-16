@@ -125,7 +125,7 @@ function createContainer(config, options = {}) {
     logger: logger.child('job'),
   });
 
-  const jobController = createJobController({ jobService, uploadService });
+  const jobController = createJobController({ jobService, uploadService, rendererService });
   const systemController = createSystemController({
     config,
     repository,

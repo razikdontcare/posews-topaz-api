@@ -13,6 +13,8 @@ const path = require('node:path');
 const { startTestServer, setRendererEnv } = require('../helpers/app');
 const { uploadVideo } = require('../helpers/multipart');
 const { isProcessAlive, liveProcessCount } = require('../../src/utils/process');
+const { JOB_STATUS } = require('../../src/domain/job-status');
+const { randomUUID } = require('node:crypto');
 
 const SMALL = [Buffer.alloc(4096, 0x41)];
 const FIELDS = { width: 1280, height: 720 };
@@ -135,8 +137,10 @@ test('an ffmpeg failure marks the job failed and removes the temp output', async
   const jobId = created.body.id;
 
   const failed = await server.waitForStatus(jobId, 'failed');
-  assert.equal(failed.error_code, 'FFMPEG_ERROR');
+  // A missing Topaz model is a renderer problem, not a per-job one.
+  assert.equal(failed.error_code, 'RENDERER_UNAVAILABLE');
   assert.match(failed.error_message, /Topaz model is not available/);
+  assert.match(failed.error_message, /Open Topaz Video AI once/);
   assert.equal(failed.output_path, null);
   assert.equal(failed.pid, null);
 
@@ -308,22 +312,46 @@ test('cancelling immediately after the upload never leaves a render running', as
   }
 });
 
-test('a renderer outage keeps jobs queued and is recovered automatically', async (t) => {
+test('a renderer outage rejects uploads, keeps queued jobs and recovers automatically', async (t) => {
   const server = await startTestServer({ rendererRecheckCooldownMs: 50 });
   t.after(() => server.stop());
+
+  // A job that is already queued when the outage starts.
+  const id = randomUUID();
+  await fsp.mkdir(server.paths.jobTempDir(id), { recursive: true });
+  const inputPath = server.paths.jobInputPath(id, '.mp4');
+  await fsp.writeFile(inputPath, 'uploaded-bytes');
+  server.repository.create({
+    id,
+    status: JOB_STATUS.QUEUED,
+    original_filename: 'queued.mp4',
+    input_path: inputPath,
+    width: 640,
+    height: 360,
+    duration_seconds: 10,
+    has_audio: 0,
+  });
 
   // Break the renderer capability checks, then declare it unavailable.
   setRendererEnv({ FAKE_FFMPEG_MODE: 'missing-caps' });
   server.rendererService.markUnavailable('simulated outage');
 
-  const created = await uploadVideo(server.baseUrl, { fields: FIELDS, chunks: SMALL });
-  const jobId = created.body.id;
+  // New uploads are rejected before any byte is read.
+  const rejected = await uploadVideo(server.baseUrl, { fields: FIELDS, chunks: SMALL });
+  assert.equal(rejected.status, 503);
+  assert.equal(rejected.body.error.code, 'RENDERER_UNAVAILABLE');
+  assert.equal(server.repository.countAll(), 1, 'the rejected upload created no job');
 
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const pending = server.repository.findById(jobId);
-  assert.equal(pending.status, 'queued', 'the job stays queued while the renderer is broken');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const pending = server.repository.findById(id);
+  assert.equal(pending.status, 'queued', 'the queued job is not failed');
   assert.equal(pending.pid, null);
+
+  // A reconcile pass notices the outage and pauses the queue (queued jobs wait).
+  const outageReconcile = await server.queue.reconcile();
+  assert.equal(outageReconcile.paused, true);
   assert.equal(server.queue.isPaused, true);
+  assert.equal(server.repository.findById(id).status, 'queued');
 
   // The API still answers and reports the outage.
   const status = await server.api('/api/v1/system/status');
@@ -335,6 +363,10 @@ test('a renderer outage keeps jobs queued and is recovered automatically', async
   setRendererEnv({ FAKE_FFMPEG_MODE: 'success' });
   const reconciled = await server.queue.reconcile();
   assert.equal(reconciled.paused, false);
-  const completed = await server.waitForStatus(jobId, 'completed', 20000);
+  const completed = await server.waitForStatus(id, 'completed', 20000);
   assert.equal(completed.progress_percent, 100);
+
+  // ...and uploads are accepted again.
+  const accepted = await uploadVideo(server.baseUrl, { fields: FIELDS, chunks: SMALL });
+  assert.equal(accepted.status, 202);
 });

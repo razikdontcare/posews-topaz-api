@@ -44,11 +44,12 @@ function createErrorHandler({ logger } = {}) {
       logger?.warn?.(`${requestLabel} rejected [${appError.code}]: ${appError.message}`);
     }
 
-    // A rejected oversized upload: tell the client to stop, then discard whatever
-    // is still in flight so the response is actually delivered (destroying the
-    // socket immediately would surface as ECONNRESET on the client).
-    const stopClientUpload = appError.code === 'UPLOAD_TOO_LARGE';
-    if (stopClientUpload) res.setHeader('Connection', 'close');
+    // Any error raised while the client is still sending its body (rejected or
+    // oversized upload): answer, then tell it to stop. Destroying the socket
+    // immediately would reach the client as ECONNRESET instead of the response.
+    const clientStillSending =
+      req.complete === false && ['POST', 'PUT', 'PATCH'].includes(req.method);
+    if (clientStillSending) res.setHeader('Connection', 'close');
 
     if (res.headersSent || res.writableEnded) {
       // The response already started (e.g. a streaming download aborted).
@@ -65,7 +66,7 @@ function createErrorHandler({ logger } = {}) {
 
     res.status(appError.status || 500).json(body);
 
-    if (stopClientUpload && req.complete === false) {
+    if (clientStillSending) {
       // Drains the remaining body; Node closes the connection afterwards because
       // of the `Connection: close` header.
       req.resume?.();

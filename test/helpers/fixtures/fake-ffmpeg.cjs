@@ -37,7 +37,9 @@ recordInvocation(
       ? 'filters'
       : args.includes('-encoders')
         ? 'encoders'
-        : 'render',
+        : args.at(-1) === '-'
+          ? 'selftest'
+          : 'render',
 );
 
 // ---- capability queries (startup validation) -------------------------------
@@ -68,7 +70,9 @@ if (args.includes('-encoders')) {
 
 // ---- render / self test ----------------------------------------------------
 const output = args[args.length - 1];
-const isSelfTest = args.includes('-f') && args[args.indexOf('-f') + 1] === 'null';
+// Self tests write to the `null` muxer (their last argument is `-`); a real render
+// writes to the reserved temp output path.
+const isSelfTest = output === '-';
 
 if (mode === 'hang') {
   // Stays alive until it is killed (cancellation tests).
@@ -101,18 +105,22 @@ if (mode === 'slow-write') {
 }
 
 if (isSelfTest) {
-  if (mode === 'fail-nvenc') {
+  // The model self test runs `tvai_up`; the NVENC self test encodes a frame.
+  const isModelSelftest = args.some((arg) => arg.includes('tvai_up'));
+
+  if (mode === 'fail-nvenc' && !isModelSelftest) {
     err('[h264_nvenc @ 000001F0F01BBFC0] Cannot load nvcuda.dll');
     err('[vost#0:0/h264_nvenc @ 000001F0F016D640] Error while opening encoder');
     err('Conversion failed!');
     process.exit(1);
   }
-  if (mode === 'fail-model') {
+  if (mode === 'fail-model' && isModelSelftest) {
     err('[Parsed_tvai_up_0 @ 0000020D410CED80] Model not found: prob-3');
     err('[fc#0 @ 0000020D410CED80] Error reinitializing filters!');
     err('Conversion failed!');
     process.exit(1);
   }
+  // Any other combination passes (e.g. the model check when NVENC already failed).
   process.exit(0);
 }
 
