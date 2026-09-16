@@ -693,7 +693,7 @@ Use this to render an operational banner/status widget and to pre-validate uploa
     "h264Nvenc": true,
     "nvencSelftest": true,
     "model": "prob-3",
-    "modelSelftest": true,
+    "renderSelftest": true,
     "version": "7.1.git",
     "reason": null,
     "checkedAt": "2026-09-14T06:00:03.114Z",
@@ -757,9 +757,10 @@ Use this to render an operational banner/status widget and to pre-validate uploa
 | `renderer.status` | `available` (idle and healthy) · `busy` (a render is running) · `unavailable` (rejected uploads with `503`; the queue pauses) |
 | `renderer.state` | Detailed state: `ready` · `degraded` (at least one check failed — read `usable` to know whether renders work) · `unavailable` · `unknown` |
 | `renderer.available` | Boolean shortcut for “can I upload now?”. `false` → `POST /api/v1/jobs` answers `503 RENDERER_UNAVAILABLE`; the server re-validates in the background and flips back to `true` on its own. |
-| `renderer.usable` | `false` when a deep self test failed (GPU encoder self test or Topaz model load), which means **renders cannot succeed on this machine** even though the binaries are present. `available` mirrors this unless the server runs with `ALLOW_DEGRADED_START=true`, which accepts jobs that will fail at render time. |
+| `renderer.usable` | `false` when a deep self test failed (GPU encoder probe or end-to-end render probe), which means **renders cannot succeed on this machine** even though the binaries are present. `available` mirrors this unless the server runs with `ALLOW_DEGRADED_START=true`, which accepts jobs that will fail at render time. |
 | `renderer.tvaiUp` / `h264Nvenc` | Filter/encoder present in the Topaz ffmpeg build. |
-| `renderer.nvencSelftest` / `modelSelftest` | `true`/`false`/`null` — the last self-test result (`null` = not run, e.g. skipped because the previous check already failed). |
+| `renderer.nvencSelftest` | `true`/`false`/`null` — result of the encoder-only probe (`null` = not run). |
+| `renderer.renderSelftest` | `true`/`false`/`null` — result of the end-to-end probe: the server renders a 1 s generated clip with the exact command a job uses. `null` = not run (skipped because the encoder probe already failed). |
 | `renderer.reason` | Short explanation when degraded/unavailable; may be `null`. |
 | `queue.queued` | Jobs waiting (same as `jobs.counts.queued`). |
 | `queue.processing` | `true` while a render is active. |
@@ -989,7 +990,7 @@ export interface SystemStatusResponse {
     h264Nvenc: boolean;
     nvencSelftest: boolean | null;
     model: string;
-    modelSelftest: boolean | null;
+    renderSelftest: boolean | null;
     version: string | null;
     reason: string | null;
     checkedAt: string | null;
@@ -1234,10 +1235,10 @@ Suggested rules:
 
 * `renderer.available === false` → block the upload button and show “renderer is offline”.
 * `renderer.usable === false` → uploads will be rejected (or, with `ALLOW_DEGRADED_START=true`, will fail
-  at render time): warn that the renderer needs attention. On a workstation without an NVIDIA GPU
-  (`renderer.nvencSelftest === false`) or without the Topaz model downloaded
-  (`renderer.modelSelftest === false`), no render can succeed — this is an environment problem, not
-  something the user can retry away.
+  at render time): warn that the renderer needs attention. An environment problem is behind it — no
+  usable NVIDIA GPU/CUDA for the server process (`renderer.nvencSelftest === false`), or a failing
+  end-to-end render probe (`renderer.renderSelftest === false`, e.g. a missing Topaz model) — so it is
+  not something the user can retry away.
 * `renderer.state === 'degraded'` → run the `usable` check first: `degraded` + `usable` means renders
   still work (e.g. only a self test was skipped).
 * `queue.paused === true` → queued jobs will not start until the renderer is back; keep the queue
@@ -1369,8 +1370,8 @@ with a generic error. Always start by calling `GET /api/v1/system/status`.
 | --- | --- | --- |
 | `POST /api/v1/jobs` → `503 RENDERER_UNAVAILABLE` | A self test failed *before* the upload started (`renderer.usable === false`) | Disable upload, show the outage banner, keep polling `system status` — the server re-checks in the background and starts accepting again on its own |
 | Job becomes `failed` with `RENDERER_UNAVAILABLE` | The render could not start (model missing, GPU lost) | Show as an operational error, not a user error; suggest retrying later |
-| `renderer.nvencSelftest === false` | The API could not encode a test clip with the exact encoder settings a render uses — no usable NVIDIA driver/CUDA for this process, a hung GPU, or a session without GPU access | Renders cannot succeed on this host; nobody can fix it from the UI |
-| `renderer.modelSelftest === false` | The configured Topaz model could not be loaded (`Model not found: prob-3`) — usually the model was never downloaded, or the API's Windows account cannot read it | Renders cannot succeed until the operator fixes it |
+| `renderer.nvencSelftest === false` | The API could not open an NVENC session with the exact encoder settings a render uses — no usable NVIDIA driver/CUDA for this process, a hung GPU, or a session without GPU access | Renders cannot succeed on this host; nobody can fix it from the UI |
+| `renderer.renderSelftest === false` | The end-to-end probe (a real render of a 1 s generated clip) failed — usually a missing Topaz model (`Model not found: prob-3`), but it can be any render-time problem | Renders cannot succeed until the operator fixes it |
 | `renderer.available === true`, `renderer.usable === false` | Server started with `ALLOW_DEGRADED_START=true` (development) | Jobs are accepted but every render fails — expect `failed` jobs |
 
 `renderer.reason` carries the operator-facing explanation: the ffmpeg diagnostic plus, for a timeout,

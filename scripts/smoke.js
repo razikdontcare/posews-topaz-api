@@ -129,10 +129,18 @@ function printRendererHint(renderer) {
     );
     return;
   }
-  if (renderer.modelSelftest === false) {
+  if (renderer.renderSelftest === false) {
     console.log(
-      `Hint: the Topaz model "${renderer.model}" could not be loaded. Open Topaz Video AI once so it ` +
-        'can download the model, then retry (or set TOPAZ_MODEL to an installed model).',
+      'Hint: the end-to-end render probe failed — the server could not render a 1 s generated clip ' +
+        'with the same ffmpeg command a job uses.',
+    );
+    console.log(
+      '      Common causes: the Topaz model is not downloaded, or the API runs as a Windows account ' +
+        'that cannot read the model files.',
+    );
+    console.log(
+      '      The "reason" line above and the server log ("render self test command: ...") carry the ' +
+        'exact ffmpeg error; run that command by hand to reproduce it.',
     );
     return;
   }
@@ -201,8 +209,8 @@ async function main() {
       `renderer : state=${status.renderer.state} usable=${status.renderer.usable} ` +
         `ffmpeg=${status.renderer.ffmpeg} ffprobe=${status.renderer.ffprobe} ` +
         `tvai_up=${status.renderer.tvaiUp} h264_nvenc=${status.renderer.h264Nvenc} ` +
-        `selftest=${status.renderer.nvencSelftest} ` +
-        `model=${status.renderer.model}/${status.renderer.modelSelftest}`,
+        `nvenc_selftest=${status.renderer.nvencSelftest} ` +
+        `render_selftest=${status.renderer.renderSelftest} model=${status.renderer.model}`,
     );
     if (status.renderer.reason) {
       console.log(`reason   : ${status.renderer.reason}`);

@@ -724,7 +724,7 @@
           },
           "usable": {
             "type": "boolean",
-            "description": "Result of the deep self tests: `false` when the GPU encoder self test or the model load check failed, which means renders cannot succeed on this machine."
+            "description": "Result of the deep self tests: `false` when the GPU encoder self test or the end-to-end render probe failed, which means renders cannot succeed on this machine."
           },
           "status": { "type": "string", "enum": ["available", "busy", "unavailable"] },
           "state": { "type": "string", "enum": ["ready", "degraded", "unavailable", "unknown"], "description": "`ready` = every check passed · `degraded` = a self test failed, so renders will most likely fail · `unavailable` = binaries/filter missing or a runtime failure." },
@@ -737,9 +737,9 @@
             "description": "Result of the last NVENC self test, which encodes a test clip with the same encoder settings a render uses (`null` = not run). `false` means renders cannot succeed on this host."
           },
           "model": { "type": "string", "example": "prob-3" },
-          "modelSelftest": {
+          "renderSelftest": {
             "type": ["boolean", "null"],
-            "description": "Result of the last Topaz model load check (`null` = not run)."
+            "description": "Result of the end-to-end render probe: the server renders a 1 s generated clip with the same ffmpeg command a job uses (`null` = not run, e.g. skipped because the encoder check already failed). `false` means a real render would fail the same way."
           },
           "version": { "type": ["string", "null"], "example": "7.1.git" },
           "reason": {"type": ["string", "null"], "description": "Operator-facing explanation when degraded/unavailable (quoted ffmpeg diagnostic, or a timeout notice). Never show it to end users — map `usable`/`available` to your own copy."},

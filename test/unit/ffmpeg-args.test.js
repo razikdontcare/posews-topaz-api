@@ -5,14 +5,16 @@ const assert = require('node:assert/strict');
 
 const {
   CAPABILITY_COMMANDS,
+  SELFTEST_CLIP,
   TOPAZ_FILTER_DEFAULTS,
   buildAudioArguments,
   buildFfmpegArgs,
   buildFilterComplex,
   buildFpsFilter,
-  buildModelSelftestArgs,
   buildProbeArgs,
+  buildRenderSelftestArgs,
   buildScaleFilters,
+  buildSelftestFixtureArgs,
   buildTvaiFilter,
   classifyFfmpegFailure,
   summarizeStderr,
@@ -202,24 +204,60 @@ test('probe and self test argument builders stay shell-free', () => {
     'C:\\VideoTemp\\x\\input.mkv',
   ]);
 
-  const selftest = buildModelSelftestArgs({ model: 'prob-3' });
-  assert.ok(selftest.includes('-f'));
-  // The model probe reuses the exact filter string a render builds.
-  const filter = selftest[selftest.indexOf('-filter_complex') + 1];
-  assert.equal(
-    filter,
-    buildTvaiFilter({ width: 640, height: 360, model: 'prob-3' }),
-    'the model self test must probe the same tvai_up parameters as a render',
-  );
-  assert.match(filter, /tvai_up=model=prob-3:scale=0:w=640:h=360:.*instances=1$/);
-  assert.equal(selftest.at(-1), '-');
+  // The probe clip is written by the same ffmpeg, and is a real video file: Topaz's
+  // tvai_up is not a normal filter and rejects synthetic frames.
+  const fixture = buildSelftestFixtureArgs({ outputPath: 'C:\\VideoTemp\\renderer-selftest\\input.mp4' });
+  assert.equal(fixture.at(-1), 'C:\\VideoTemp\\renderer-selftest\\input.mp4');
+  assert.equal(fixture[fixture.indexOf('-i') + 1], 'testsrc=size=640x360:rate=25:duration=1');
+  assert.equal(fixture[fixture.indexOf('-c:v') + 1], 'mpeg4');
 });
 
 /*
- * The startup NVENC probe used to encode a single 128x128 frame with bare encoder
- * settings. That disagrees with a real render on some drivers (a production box
- * that rendered fine was refused every upload), so the probe now has to replicate
- * the real encoder block and a realistic frame geometry.
+ * The end-to-end probe must be **the same command a job runs**, only smaller.
+ *
+ * Two earlier probes were false negatives on a production machine that rendered
+ * fine: a bare `-c:v h264_nvenc` encode of a 128x128 frame, and a stripped-down
+ * `tvai_up` filter writing into the `null` muxer. Both are now replaced by a real
+ * render built with `buildFfmpegArgs()`.
+ */
+test('the end-to-end probe is the same command a job runs, only smaller', () => {
+  const input = 'C:\\VideoTemp\\renderer-selftest\\input.mp4';
+  const output = 'C:\\VideoTemp\\renderer-selftest\\output.mp4';
+  const probe = buildRenderSelftestArgs({ inputPath: input, outputPath: output, model: 'prob-3' });
+
+  const job = buildFfmpegArgs({
+    inputPath: input,
+    outputPath: output,
+    width: SELFTEST_CLIP.probeWidth,
+    height: SELFTEST_CLIP.probeHeight,
+    model: 'prob-3',
+    hasAudio: false,
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(probe, job);
+
+  // ...and it is a render: a real input, the full filter chain, the real encoder.
+  assert.equal(probe[probe.indexOf('-i') + 1], input);
+  assert.equal(probe.at(-1), output);
+  const filter = probe[probe.indexOf('-filter_complex') + 1];
+  assert.match(filter, /^tvai_up=model=prob-3:scale=0:w=1280:h=720:/);
+  assert.match(filter, /,scale=w=1280:h=720:flags=lanczos:threads=0,scale=out_color_matrix=bt709$/);
+  assert.equal(probe[probe.indexOf('-c:v') + 1], 'h264_nvenc');
+  assert.deepEqual(
+    probe.slice(probe.indexOf('-color_trc'), probe.indexOf('-filter_complex')),
+    buildFfmpegArgs({
+      inputPath: input,
+      outputPath: output,
+      width: 1280,
+      height: 720,
+      bounds: BOUNDS,
+    }).slice(probe.indexOf('-color_trc'), probe.indexOf('-filter_complex')),
+  );
+});
+
+/*
+ * The encoder-only probe used to encode a single 128x128 frame with bare encoder
+ * settings, which NVENC rejects on some drivers even though a real render works.
  */
 test('the NVENC self test mirrors the encoder block a render uses', () => {
   const selftest = CAPABILITY_COMMANDS.selftest;

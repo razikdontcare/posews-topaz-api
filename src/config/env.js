@@ -35,6 +35,7 @@ const DEFAULTS = Object.freeze({
   reconcileIntervalMs: 30000,
   rendererCheckTimeoutMs: 30000,
   rendererSelftestTimeoutMs: 60000,
+  rendererProbeTimeoutMs: 180000,
   rendererRecheckCooldownMs: 60000,
   shutdownTimeoutMs: 15000,
   killGraceMs: 5000,
@@ -247,6 +248,11 @@ function buildConfig() {
       DEFAULTS.rendererSelftestTimeoutMs,
       { min: 1000 },
     ),
+    // The end-to-end probe is a real render (model load + a second of video), so it
+    // gets its own, much larger budget.
+    rendererProbeTimeoutMs: readInt('RENDERER_PROBE_TIMEOUT_MS', DEFAULTS.rendererProbeTimeoutMs, {
+      min: 1000,
+    }),
     rendererRecheckCooldownMs: readInt(
       'RENDERER_RECHECK_COOLDOWN_MS',
       DEFAULTS.rendererRecheckCooldownMs,

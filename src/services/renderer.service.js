@@ -23,7 +23,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   CAPABILITY_COMMANDS,
-  buildModelSelftestArgs,
+  SELFTEST_CLIP,
+  buildRenderSelftestArgs,
+  buildSelftestFixtureArgs,
   hasEncoder,
   hasFilter,
   summarizeStderr,
@@ -69,13 +71,15 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     h264Nvenc: false,
     nvencWorking: null,
     model: config.topazModel,
-    modelWorking: null,
+    /** Result of the end-to-end probe (a real, small render). */
+    renderWorking: null,
     version: null,
     reason: null,
     checkedAt: null,
     warnings: [],
   };
   let lastCheckAt = 0;
+  let validationInFlight = null;
 
   function snapshot() {
     return { ...status, warnings: [...status.warnings] };
@@ -118,10 +122,101 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
   }
 
   /**
-   * Executes the full validation suite.
+   * Renders a tiny generated clip with **the exact command a job would run**.
+   *
+   * AGENTS.md §24 asks for startup validation, but a *synthetic* probe is not
+   * equivalent to a render: pushing generated frames straight into the `null` muxer
+   * made a production machine whose renders worked fine look broken twice (a
+   * 128x128 NVENC probe, then a stripped-down `tvai_up` probe). This one goes
+   * through `buildFfmpegArgs()` — the builder every job uses — from a real input
+   * file to a real output file, so its verdict is evidence rather than inference.
+   *
+   * Everything it creates lives in `TEMP_DIR\renderer-selftest` and is removed
+   * again, also on failure.
+   */
+  async function runRenderProbe() {
+    const dir = path.join(config.tempDir, 'renderer-selftest');
+    const inputPath = path.join(dir, 'input.mp4');
+    const outputPath = path.join(dir, 'output.mp4');
+
+    try {
+      await fs.promises.mkdir(dir, { recursive: true });
+
+      const fixture = await runCommand(
+        config.ffmpegPath,
+        buildSelftestFixtureArgs({ outputPath: inputPath }),
+        { timeoutMs: config.rendererCheckTimeoutMs },
+      );
+      if (fixture.spawnError || fixture.timedOut || fixture.code !== 0) {
+        return {
+          ok: false,
+          reason: `the probe clip could not be generated: ${describeProbeFailure(fixture, {
+            label: 'the probe clip step',
+            timeoutMs: config.rendererCheckTimeoutMs,
+          })}`,
+        };
+      }
+
+      const args = buildRenderSelftestArgs({
+        inputPath,
+        outputPath,
+        model: config.topazModel,
+        bounds: {
+          min: config.minDimension,
+          max: config.maxDimension,
+          enforceEven: config.enforceEvenDimensions,
+        },
+      });
+
+      const render = await runCommand(config.ffmpegPath, args, {
+        timeoutMs: config.rendererProbeTimeoutMs,
+      });
+      if (render.spawnError || render.timedOut || render.code !== 0) {
+        return {
+          ok: false,
+          args,
+          reason: describeProbeFailure(render, {
+            label: 'the probe render',
+            timeoutMs: config.rendererProbeTimeoutMs,
+          }),
+        };
+      }
+
+      const stat = await fs.promises.stat(outputPath).catch(() => null);
+      if (!stat || stat.size === 0) {
+        return { ok: false, args, reason: 'the probe render produced no output file' };
+      }
+
+      logger?.debug?.(`render self test passed (${stat.size} bytes)`);
+      return { ok: true, args };
+    } catch (error) {
+      return { ok: false, reason: `the probe could not run: ${error.message}` };
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /**
+   * Executes the full validation suite, at most once at a time.
+   *
+   * The deep probe is a real render, so two concurrent sweeps (the queue and an
+   * upload both calling `ensureAvailable`) must share one promise instead of
+   * racing over the same probe files and the GPU.
+   *
    * @returns {Promise<{ ok: boolean, state: string, fatalErrors: string[], warnings: string[], status: object }>}
    */
   async function validate() {
+    if (validationInFlight) return validationInFlight;
+    validationInFlight = runValidation().finally(() => {
+      validationInFlight = null;
+    });
+    return validationInFlight;
+  }
+
+  /**
+   * @returns {Promise<{ ok: boolean, state: string, fatalErrors: string[], warnings: string[], status: object }>}
+   */
+  async function runValidation() {
     const fatalErrors = [];
     const warnings = [];
     const probe = {
@@ -131,7 +226,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       h264Nvenc: false,
       nvencWorking: null,
       model: config.topazModel,
-      modelWorking: null,
+      renderWorking: null,
       version: null,
     };
 
@@ -300,32 +395,23 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       }
     }
 
-    // 8. can the configured Topaz model actually be loaded? (Catches "Model not
-    //    found: prob-3" before the first multi-gigabyte upload.) Skipped when the
-    //    GPU itself is unusable, because the model check cannot say anything then.
+    // 8. end-to-end probe: render a generated clip through the *same command a job
+    //    uses* (Topaz model + filter chain + NVENC + muxing) — AGENTS.md §24.
+    //    Skipped when the GPU encoder itself is unusable, because the probe could
+    //    not say anything useful then (and would burn GPU time on every recheck).
     if (config.rendererModelSelftest && probe.nvencWorking !== false) {
-      const modelSelftest = await runCommand(
-        config.ffmpegPath,
-        buildModelSelftestArgs({ model: config.topazModel }),
-        { timeoutMs: config.rendererSelftestTimeoutMs },
-      );
-      probe.modelWorking =
-        !modelSelftest.spawnError && !modelSelftest.timedOut && modelSelftest.code === 0;
-      if (!probe.modelWorking) {
-        const reason = describeProbeFailure(modelSelftest, {
-          label: 'the Topaz model check',
-          timeoutMs: config.rendererSelftestTimeoutMs,
-        });
-        logger?.warn?.(
-          `Topaz model self test command: ${formatCommand(
-            config.ffmpegPath,
-            buildModelSelftestArgs({ model: config.topazModel }),
-          )}`,
-        );
+      const renderProbe = await runRenderProbe();
+      probe.renderWorking = renderProbe.ok;
+      if (!probe.renderWorking) {
+        if (renderProbe.args) {
+          logger?.warn?.(
+            `render self test command: ${formatCommand(config.ffmpegPath, renderProbe.args)}`,
+          );
+        }
         renderBlocker.push(
-          `Topaz model "${config.topazModel}" could not be loaded: ${reason}. ` +
-            'Open Topaz Video AI once so it can download the model, or set TOPAZ_MODEL to an ' +
-            'installed model.',
+          `Topaz render self test failed: ${renderProbe.reason}. The probe renders a ` +
+            `${SELFTEST_CLIP.probeSeconds}s clip through the same ffmpeg command a job uses, so a ` +
+            'failure here means renders cannot succeed on this machine.',
         );
       }
     }

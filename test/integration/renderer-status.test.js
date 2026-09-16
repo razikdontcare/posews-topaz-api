@@ -54,10 +54,10 @@ test('a failed NVENC self test makes the renderer unusable and rejects uploads',
   assert.equal(status.body.renderer.usable, false);
   assert.equal(status.body.renderer.status, 'unavailable');
   assert.equal(status.body.renderer.nvencSelftest, false);
-  assert.equal(status.body.renderer.modelSelftest, null, 'the model check is skipped');
+  assert.equal(status.body.renderer.renderSelftest, null, 'the deep probe is skipped');
 });
 
-test('a failed Topaz model check is reported as a renderer problem too', async (t) => {
+test('a failing render probe is reported as a renderer problem too', async (t) => {
   const server = await startTestServer({
     rendererSelftest: true,
     rendererModelSelftest: true,
@@ -67,15 +67,24 @@ test('a failed Topaz model check is reported as a renderer problem too', async (
 
   const { status } = server.init.validation;
   assert.equal(status.nvencWorking, true, 'the encoder itself works');
-  assert.equal(status.modelWorking, false);
+  assert.equal(status.renderWorking, false);
   assert.equal(status.usable, false);
   assert.equal(status.available, false);
-  assert.match(status.reason, /Topaz model "prob-3" could not be loaded/);
+  assert.match(status.reason, /Topaz render self test failed/);
   assert.match(status.reason, /Model not found: prob-3/);
-  assert.match(status.reason, /Open Topaz Video AI once/);
+  assert.match(status.reason, /same ffmpeg command a job uses/);
 
   const statusResponse = await server.api('/api/v1/system/status');
-  assert.equal(statusResponse.body.renderer.modelSelftest, false);
+  assert.equal(statusResponse.body.renderer.renderSelftest, false);
+
+  // The probe cleans its scratch files up even when the render fails.
+  await assert.rejects(
+    fsp.stat(path.join(server.config.tempDir, 'renderer-selftest')),
+    /ENOENT/,
+  );
+
+  // ...and the failure has to come from the render, not from generating the clip.
+  assert.doesNotMatch(status.reason, /probe clip could not be generated/);
 });
 
 test('ALLOW_DEGRADED_START=true accepts jobs even when the renderer is not usable', async (t) => {
@@ -132,12 +141,13 @@ test('the renderer recovers by itself once the self test passes again', async (t
  * the real command.
  */
 test('the NVENC self test spawns the same encoder block as a render', async (t) => {
-  const server = await startTestServer({ rendererSelftest: true });
+  const server = await startTestServer({ rendererSelftest: true, rendererModelSelftest: true });
   const argsFile = path.join(server.root, 'ffmpeg-args.jsonl');
   setRendererEnv({ FAKE_FFMPEG_ARGS_FILE: argsFile });
   t.after(() => server.stop());
 
-  await server.rendererService.validate();
+  const result = await server.rendererService.validate();
+  assert.equal(result.usable, true, 'both probes pass with the fake renderer');
 
   const invocations = (await fsp.readFile(argsFile, 'utf8'))
     .trim()
@@ -164,6 +174,20 @@ test('the NVENC self test spawns the same encoder block as a render', async (t) 
   );
   assert.equal(probe.args[probe.args.indexOf('-i') + 1], 'nullsrc=s=640x360:r=25');
   assert.equal(probe.args.at(-1), '-');
+
+  // The end-to-end probe must be an actual render: a generated input file, the full
+  // tvai_up + scale chain, the real encoder block, a real output file.
+  const renders = invocations.filter((entry) => entry.kind === 'render');
+  const fixture = renders.find((entry) => entry.args.some((arg) => arg.startsWith('testsrc=')));
+  const renderProbe = renders.find((entry) => entry.args.some((arg) => arg.includes('tvai_up')));
+  assert.ok(fixture, 'the probe generates its own input clip');
+  assert.ok(renderProbe, 'the probe must render through tvai_up, not just load the model');
+  assert.match(renderProbe.args[renderProbe.args.indexOf('-i') + 1], /renderer-selftest.*input\.mp4$/);
+  assert.match(renderProbe.args.at(-1), /renderer-selftest.*output\.mp4$/);
+  assert.match(
+    renderProbe.args[renderProbe.args.indexOf('-filter_complex') + 1],
+    /^tvai_up=model=prob-3:scale=0:w=1280:h=720:.*,scale=w=1280:h=720:flags=lanczos:threads=0,scale=out_color_matrix=bt709$/,
+  );
 });
 
 test('a self test that never finishes is reported as a timeout, not an unknown error', async (t) => {
@@ -179,4 +203,18 @@ test('a self test that never finishes is reported as a timeout, not an unknown e
   assert.match(status.reason, /h264_nvenc self test failed/);
   assert.match(status.reason, /did not finish within 300 ms/);
   assert.doesNotMatch(status.reason, /unknown reason/);
+});
+
+test('the render probe is skipped when the encoder probe already failed', async (t) => {
+  const server = await startTestServer({
+    rendererSelftest: true,
+    rendererModelSelftest: true,
+    rendererEnv: { FAKE_FFMPEG_MODE: 'fail-nvenc' },
+  });
+  t.after(() => server.stop());
+
+  const { status } = server.init.validation;
+  assert.equal(status.nvencWorking, false);
+  assert.equal(status.renderWorking, null, 'no GPU time wasted on the deep probe');
+  assert.doesNotMatch(status.reason, /render self test/);
 });

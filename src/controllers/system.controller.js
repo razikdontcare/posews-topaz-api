@@ -43,7 +43,7 @@ function createSystemController({ config, repository, queue, renderService, rend
         h264Nvenc: renderer.h264Nvenc,
         nvencSelftest: renderer.nvencWorking,
         model: renderer.model,
-        modelSelftest: renderer.modelWorking,
+        renderSelftest: renderer.renderWorking,
         version: renderer.version,
         reason: renderer.reason,
         checkedAt: renderer.checkedAt,

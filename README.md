@@ -133,8 +133,9 @@ Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `RENDERER_SELFTEST` | `true` | Encode with `h264_nvenc` using the same encoder block a render uses, to verify the GPU/driver actually works. |
-| `RENDERER_MODEL_SELFTEST` | `true` | Load `TOPAZ_MODEL` once with the same `tvai_up` parameters a render uses, so a missing model is reported at startup. |
-| `RENDERER_SELFTEST_TIMEOUT_MS` | `60000` | Budget for each self test before it is killed and reported as a timeout. |
+| `RENDERER_MODEL_SELFTEST` | `true` | Run the end-to-end probe: render a 1 s generated clip through the exact ffmpeg command a job uses (Topaz model + filter chain + NVENC + muxing). |
+| `RENDERER_SELFTEST_TIMEOUT_MS` | `60000` | Budget for the encoder probe before it is killed and reported as a timeout. |
+| `RENDERER_PROBE_TIMEOUT_MS` | `180000` | Budget for the end-to-end probe (it is a real render, so model loading counts). |
 | `REQUIRE_NVENC` | `true` | Fail startup when `h264_nvenc` is missing from the build. |
 | `ALLOW_DEGRADED_START` | `false` | Start **and accept uploads** even when validation or a self test fails (those jobs will fail at render time). See the note below. |
 | `RENDERER_RECHECK_COOLDOWN_MS` | `60000` | How often an unusable renderer is re-validated in the background. |
@@ -143,17 +144,20 @@ Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
 | `HTTP_REQUEST_TIMEOUT_MS` | `0` | `0` = no limit (multi-hour uploads must not be cut off). |
 
 > **A failed self test is not a warning.** When `h264_nvenc` cannot be initialised (no NVIDIA driver)
-> or `TOPAZ_MODEL` cannot be loaded (model not downloaded), the renderer is reported as
-> `available: false, usable: false`: `POST /api/v1/jobs` answers `503 RENDERER_UNAVAILABLE`, the queue
-> pauses and keeps the existing jobs queued, and the server re-validates every
-> `RENDERER_RECHECK_COOLDOWN_MS` until the problem is gone. Set `ALLOW_DEGRADED_START=true` only on a
-> development machine: jobs are then accepted and fail with `RENDERER_UNAVAILABLE` immediately.
+> or the end-to-end probe fails (missing Topaz model, no GPU access from this process, hung driver),
+> the renderer is reported as `available: false, usable: false`: `POST /api/v1/jobs` answers
+> `503 RENDERER_UNAVAILABLE`, the queue pauses and keeps the existing jobs queued, and the server
+> re-validates every `RENDERER_RECHECK_COOLDOWN_MS` until the problem is gone. Set
+> `ALLOW_DEGRADED_START=true` only on a development machine: jobs are then accepted and fail with
+> `RENDERER_UNAVAILABLE` immediately.
 >
-> Both self tests are **not minimal probes**: they encode/decode with the same encoder block and the
-> same `tvai_up` parameter string a render uses, at a realistic frame size, so their verdict matches
-> what a render will do. When one fails, the exact ffmpeg error is in `renderer.reason`
-> (`GET /api/v1/system/status`) and the reproducing command is logged as
-> `NVENC self test command: …` / `Topaz model self test command: …`.
+> Neither self test is a synthetic probe. The encoder check uses the exact encoder block of a render,
+> and the end-to-end check **is a render** — it generates a 1 s clip with the same ffmpeg and pushes it
+> through `buildFfmpegArgs()`, the builder every job uses, into `TEMP_DIR\renderer-selftest\`. That
+> matters: earlier minimal probes (a bare 128x128 NVENC encode, and a stripped-down `tvai_up` filter
+> writing into the `null` muxer) both failed on production machines whose real renders worked fine.
+> When a check fails, the exact ffmpeg error is in `renderer.reason` (`GET /api/v1/system/status`) and
+> the reproducing command is logged as `NVENC self test command: …` / `render self test command: …`.
 
 ### Lifecycle, HTTP and logging
 
@@ -407,7 +411,7 @@ curl.exe http://localhost:3000/api/v1/system/status
     "h264Nvenc": true,
     "nvencSelftest": true,
     "model": "prob-3",
-    "modelSelftest": true,
+    "renderSelftest": true,
     "activeJobId": "769337925-…"
   },
   "queue": { "concurrency": 1, "queued": 3, "processing": true, "activeCount": 1, "paused": false },
@@ -597,9 +601,9 @@ HTTP responses against the documented schemas.
 | Startup: `Renderer validation failed: tvai_up filter was not found in: …` | `FFMPEG_PATH` points at a normal ffmpeg build. Point it at the Topaz Video AI binary. |
 | Startup: `h264_nvenc was not found` / `Cannot load nvcuda.dll` | No NVIDIA driver (or a remote/headless session without GPU access). Install the driver; the self test then passes. |
 | Startup: `h264_nvenc self test failed: …` (renderer unusable, uploads get `503`) | The deep probe could not open an NVENC session. Read `renderer.reason` in `/api/v1/system/status` and the `NVENC self test command: …` log line, then run that command by hand on the render host — it is the same encoder configuration a render uses, so it reproduces the problem without uploading a video. |
-| Startup: `… did not finish within 60000 ms and was killed (the GPU may be hung)` | The self test timed out instead of erroring. If the GPU is only slow (first NVENC device init right after boot), raise `RENDERER_SELFTEST_TIMEOUT_MS`; otherwise treat it as a driver problem. |
-| Startup: `Topaz model "prob-3" could not be loaded` | The model files are per-user: the Windows account running the API must be able to read them. Open Topaz Video AI once as that account (or set `TOPAZ_MODEL` to an installed model). |
-| Render fails: `Topaz model is not available: Model not found: prob-3` | Open Topaz Video AI once so it downloads the model, or set `TOPAZ_MODEL` to an installed one. The startup warning (`RENDERER_MODEL_SELFTEST`) reports this before the first upload. |
+| Startup: `… did not finish within 60000 ms and was killed (the GPU may be hung)` | The self test timed out instead of erroring. If the GPU is only slow (first NVENC device init right after boot, or a cold model load), raise `RENDERER_SELFTEST_TIMEOUT_MS` / `RENDERER_PROBE_TIMEOUT_MS`; otherwise treat it as a driver problem. |
+| Startup: `Topaz render self test failed: …` | The end-to-end probe (a real render of a 1 s generated clip) failed. Read `renderer.reason` and the `render self test command: …` log line, then run that command by hand on the render host — it is the same command a job runs. |
+| Render fails: `Topaz model is not available: Model not found: prob-3` | Open Topaz Video AI once so it downloads the model, or set `TOPAZ_MODEL` to an installed one. The startup probe (`RENDERER_MODEL_SELFTEST`) reports this before the first upload. Note that models are per-user: the Windows account running the API must be able to read them. |
 | Render fails: `NVIDIA encoder is not available: …` | The driver stopped working or the GPU is busy; the renderer is marked unavailable, the queue pauses, and it retries automatically after `RENDERER_RECHECK_COOLDOWN_MS`. |
 | `413 UPLOAD_TOO_LARGE` | Raise `MAX_UPLOAD_SIZE_BYTES` (default 50 GiB). |
 | `400 … "width" must be an even number` | H.264 yuv420p requires even dimensions; disable with `ENFORCE_EVEN_DIMENSIONS=false` only if your encoder allows it. |

@@ -127,7 +127,7 @@ async function initialize({ container, config, logger }) {
     logger.info(
       `renderer ready: ffmpeg ${validation.status.version || '(version unknown)'} ` +
         `tvai_up=${validation.status.tvaiUp} h264_nvenc=${validation.status.h264Nvenc} ` +
-        `selftest=${validation.status.nvencWorking} model=${validation.status.modelWorking}`,
+        `nvenc_selftest=${validation.status.nvencWorking} render_selftest=${validation.status.renderWorking}`,
     );
   } else {
     for (const fatal of validation.fatalErrors) logger.error(fatal);

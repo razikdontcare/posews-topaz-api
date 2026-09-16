@@ -10,6 +10,9 @@
  *   FAKE_FFMPEG_DELAY_MS      delay between progress blocks
  *   FAKE_FFMPEG_OUTPUT_BYTES  size of the rendered file
  *   FAKE_FFMPEG_FORCE         force a specific exit code
+ *
+ * `fail-nvenc` fails the encoder-only startup probe; `fail-model` fails anything
+ * that runs `tvai_up`, which includes real renders and the end-to-end probe.
  */
 
 const fs = require('node:fs');
@@ -71,8 +74,9 @@ if (args.includes('-encoders')) {
 // ---- render / self test ----------------------------------------------------
 const output = args[args.length - 1];
 // Self tests write to the `null` muxer (their last argument is `-`); a real render
-// writes to the reserved temp output path.
+// (including the end-to-end startup probe) writes to a file path.
 const isSelfTest = output === '-';
+const hasTvaiUp = args.some((arg) => arg.includes('tvai_up'));
 
 if (mode === 'hang') {
   // Stays alive until it is killed (cancellation tests).
@@ -104,23 +108,34 @@ if (mode === 'slow-write') {
   return;
 }
 
-if (isSelfTest) {
-  // The model self test runs `tvai_up`; the NVENC self test encodes a frame.
-  const isModelSelftest = args.some((arg) => arg.includes('tvai_up'));
+// A missing/unloadable Topaz model breaks every render that uses it, so this mode
+// fails real renders (and therefore the end-to-end startup probe) too — but not the
+// probe's own clip generation, which is a plain mpeg4 encode.
+if (mode === 'fail-model' && hasTvaiUp) {
+  err('[Parsed_tvai_up_0 @ 0000020D410CED80] Model not found: prob-3');
+  err('[fc#0 @ 0000020D410CED80] Error reinitializing filters!');
+  err('Conversion failed!');
+  process.exit(1);
+}
 
-  if (mode === 'fail-nvenc' && !isModelSelftest) {
+if (args.some((arg) => arg.startsWith('testsrc='))) {
+  try {
+    fs.writeFileSync(output, Buffer.alloc(Number(process.env.FAKE_FFMPEG_OUTPUT_BYTES || 2048), 7));
+  } catch (error) {
+    err(`could not write output: ${error.message}`);
+    process.exit(2);
+  }
+  process.exit(0);
+}
+
+if (isSelfTest) {
+  if (mode === 'fail-nvenc') {
     err('[h264_nvenc @ 000001F0F01BBFC0] Cannot load nvcuda.dll');
     err('[vost#0:0/h264_nvenc @ 000001F0F016D640] Error while opening encoder');
     err('Conversion failed!');
     process.exit(1);
   }
-  if (mode === 'fail-model' && isModelSelftest) {
-    err('[Parsed_tvai_up_0 @ 0000020D410CED80] Model not found: prob-3');
-    err('[fc#0 @ 0000020D410CED80] Error reinitializing filters!');
-    err('Conversion failed!');
-    process.exit(1);
-  }
-  // Any other combination passes (e.g. the model check when NVENC already failed).
+  // Any other combination passes (this is the encoder-only probe).
   process.exit(0);
 }
 
@@ -162,11 +177,6 @@ const emit = () => {
       err('[vost#0:0/h264_nvenc @ 000001F0F016D640] Error while opening encoder - maybe incorrect parameters');
       err('Conversion failed!');
       process.exit(Number(process.env.FAKE_FFMPEG_FORCE || 1));
-    }
-    if (mode === 'fail-model') {
-      err('[Parsed_tvai_up_0 @ 0000020D410CED80] Model not found: prob-3');
-      err('Conversion failed!');
-      process.exit(1);
     }
     if (mode === 'no-output') {
       err('Everything looked fine but nothing was written.');

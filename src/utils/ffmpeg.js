@@ -99,26 +99,26 @@ const TOPAZ_FILTER_NAME = 'tvai_up';
 const NVENC_ENCODER_NAME = 'h264_nvenc';
 
 /**
- * Geometry for the startup self tests.
+ * Geometry for the startup self tests (AGENTS.md §24).
  *
- * Deliberately not a tiny probe frame: NVENC only accepts frames inside its
- * supported dimension/rate-control range, and a probe outside it fails on a
- * healthy GPU. Both self tests therefore mirror the geometry and the encoder
- * configuration of a real render (AGENTS.md §24), so their verdict predicts what
- * a render will do.
+ * Deliberately not tiny probe frames: NVENC only accepts frames inside its
+ * supported dimension/rate-control range, and the Topaz models expect a clip that
+ * looks like real input. Both probes therefore mirror what a job does at a small
+ * scale, so their verdict predicts what a render will do.
  */
 const SELFTEST_CLIP = Object.freeze({
-  /** Encoder self test: 640x360 @ 25 fps, 1.2 s of frames. */
+  /** Encoder-only probe: 640x360 @ 25 fps for 30 frames. */
   width: 640,
   height: 360,
   rate: 25,
   /** More frames than the encoder's `-rc-lookahead` so it can flush normally. */
   frames: 30,
-  /** Model self test: a 2x upscale, like a normal request. */
-  modelInputWidth: 320,
-  modelInputHeight: 180,
-  modelWidth: 640,
-  modelHeight: 360,
+  /** End-to-end probe: a 1 s 640x360 clip upscaled 2x, like a normal request. */
+  probeInputWidth: 640,
+  probeInputHeight: 360,
+  probeWidth: 1280,
+  probeHeight: 720,
+  probeSeconds: 1,
 });
 
 const MODEL_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
@@ -364,31 +364,64 @@ function buildFfmpegArgs(options) {
   return args;
 }
 
-/** Builds the `tvai_up` arguments used for the startup model self test. */
-function buildModelSelftestArgs({
-  model,
-  width = SELFTEST_CLIP.modelWidth,
-  height = SELFTEST_CLIP.modelHeight,
-  device = TOPAZ_FILTER_DEFAULTS.device,
-  input = `${SELFTEST_CLIP.modelInputWidth}x${SELFTEST_CLIP.modelInputHeight}`,
+/**
+ * Builds the clip the end-to-end probe renders: a real video file, written with
+ * the same ffmpeg. A generated *file* is used (never a raw `lavfi` frame pushed
+ * into the `null` muxer) because Topaz's `tvai_up` is not a normal filter — it
+ * refused synthetic frames on a machine whose real renders worked fine.
+ */
+function buildSelftestFixtureArgs({
+  outputPath,
+  width = SELFTEST_CLIP.probeInputWidth,
+  height = SELFTEST_CLIP.probeInputHeight,
+  rate = SELFTEST_CLIP.rate,
+  seconds = SELFTEST_CLIP.probeSeconds,
 } = {}) {
   return [
     '-hide_banner',
     '-nostdin',
+    '-y',
     '-f',
     'lavfi',
     '-i',
-    `nullsrc=s=${input}`,
-    '-frames:v',
-    String(SELFTEST_CLIP.frames),
-    // The same filter string a render uses, so a load failure here predicts a
-    // render failure instead of being an artifact of a stripped-down probe.
-    '-filter_complex',
-    buildTvaiFilter({ width, height, model, parameters: { device } }),
-    '-f',
-    'null',
-    '-',
+    `testsrc=size=${width}x${height}:rate=${rate}:duration=${seconds}`,
+    '-an',
+    '-c:v',
+    'mpeg4',
+    '-q:v',
+    '5',
+    '-pix_fmt',
+    'yuv420p',
+    outputPath,
   ];
+}
+
+/**
+ * Builds the end-to-end probe command: **the exact command a job would run**, from
+ * a real input file to a real output file, only smaller (AGENTS.md §24).
+ *
+ * It deliberately goes through `buildFfmpegArgs()` instead of hand-written probe
+ * arguments: the previous "model load" probe used a stripped-down `tvai_up` filter
+ * with a `null` muxer, disagreed with reality, and blocked a production machine.
+ */
+function buildRenderSelftestArgs({
+  inputPath,
+  outputPath,
+  model = TOPAZ_FILTER_DEFAULTS.model,
+  width = SELFTEST_CLIP.probeWidth,
+  height = SELFTEST_CLIP.probeHeight,
+  bounds = { min: 16, max: 7680, enforceEven: true },
+} = {}) {
+  return buildFfmpegArgs({
+    inputPath,
+    outputPath,
+    width,
+    height,
+    model,
+    // The generated clip has no audio stream, so no audio mapping is added.
+    hasAudio: false,
+    bounds,
+  });
 }
 
 /** `ffprobe -v error -show_entries format=duration:stream=... -of json INPUT`. */
@@ -559,6 +592,7 @@ module.exports = {
   MP4_COPY_SAFE_AUDIO,
   NVENC_ENCODER_NAME,
   NVENC_PRESETS,
+  SELFTEST_CLIP,
   QP_RANGE,
   SWSCALE_FLAGS,
   TOPAZ_FILTER_DEFAULTS,
@@ -571,9 +605,10 @@ module.exports = {
   buildFfmpegArgs,
   buildFilterComplex,
   buildFpsFilter,
-  buildModelSelftestArgs,
   buildProbeArgs,
+  buildRenderSelftestArgs,
   buildScaleFilters,
+  buildSelftestFixtureArgs,
   buildTvaiFilter,
   buildVideoEncoderArguments,
   classifyFfmpegFailure,
