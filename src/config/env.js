@@ -12,6 +12,12 @@ const path = require("node:path");
 const dotenv = require("dotenv");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
+const DEFAULT_TOPAZ_MODEL_DIR = path.join(
+  process.env.PROGRAMDATA || "C:\\ProgramData",
+  "Topaz Labs LLC",
+  "Topaz Video AI",
+  "models",
+);
 
 // `.env` is optional: PM2 ecosystem files or the OS environment may provide the values.
 dotenv.config({ path: path.join(PROJECT_ROOT, ".env"), quiet: true });
@@ -178,6 +184,8 @@ function buildConfig() {
 
   const dataDir = readPath("DATA_DIR", path.join(PROJECT_ROOT, "data"));
   const logsDir = readPath("LOGS_DIR", path.join(PROJECT_ROOT, "logs"));
+  const topazModelDir = readPath("TOPAZ_MODEL_DIR", DEFAULT_TOPAZ_MODEL_DIR);
+  const topazModelDataDir = readPath("TOPAZ_MODEL_DATA_DIR", topazModelDir);
 
   // Per-job render tuning (the `POST /api/v1/jobs` options below).
   const topazModel = readString("TOPAZ_MODEL", "prob-3").toLowerCase();
@@ -223,6 +231,12 @@ function buildConfig() {
       "TOPAZ_WORKING_DIR",
       path.dirname(readPath("FFMPEG_PATH", DEFAULTS.ffmpegPath)),
     ),
+    topazModelDir,
+    topazModelDataDir,
+    topazEnvironment: Object.freeze({
+      TVAI_MODEL_DIR: topazModelDir,
+      TVAI_MODEL_DATA_DIR: topazModelDataDir,
+    }),
 
     // Upload handling
     maxUploadSizeBytes: readInt(
@@ -389,10 +403,18 @@ function createConfig(overrides = {}) {
     "dbFile",
     "ffmpegPath",
     "ffprobePath",
+    "topazWorkingDir",
+    "topazModelDir",
+    "topazModelDataDir",
   ]) {
     if (overrides[key] !== undefined)
       merged[key] = normalizePathInput(overrides[key], base[key]);
   }
+  merged.topazEnvironment = Object.freeze({
+    ...(overrides.topazEnvironment || {}),
+    TVAI_MODEL_DIR: merged.topazModelDir,
+    TVAI_MODEL_DATA_DIR: merged.topazModelDataDir,
+  });
   if (overrides.dataDir !== undefined && overrides.dbFile === undefined) {
     merged.dbFile = path.join(merged.dataDir, "jobs.sqlite");
   }

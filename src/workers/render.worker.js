@@ -483,6 +483,7 @@ function createRenderWorker({
     const child = spawn(config.ffmpegPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: config.topazWorkingDir,
+      env: config.topazEnvironment,
     });
     renderService.register(jobId, child, {
       pid: child.pid ?? null,

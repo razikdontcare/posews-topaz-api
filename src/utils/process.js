@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Process management helpers.
@@ -10,14 +10,14 @@
  *  - on Windows the process *tree* is terminated with `taskkill /T /F`.
  */
 
-const path = require('node:path');
-const { spawn } = require('node:child_process');
+const path = require("node:path");
+const { spawn } = require("node:child_process");
 
-const SCRIPT_EXTENSIONS = new Set(['.js', '.cjs', '.mjs']);
+const SCRIPT_EXTENSIONS = new Set([".js", ".cjs", ".mjs"]);
 const liveChildren = new Set();
 const DEFAULT_TASKKILL = process.env.SystemRoot
-  ? path.join(process.env.SystemRoot, 'System32', 'taskkill.exe')
-  : 'taskkill.exe';
+  ? path.join(process.env.SystemRoot, "System32", "taskkill.exe")
+  : "taskkill.exe";
 
 /**
  * Test/CI seam: when the configured executable is a Node script, run it through
@@ -25,9 +25,13 @@ const DEFAULT_TASKKILL = process.env.SystemRoot
  * without a GPU, while production always spawns the real Topaz executable.
  */
 function resolveCommand(executablePath, args) {
-  const extension = path.extname(executablePath || '').toLowerCase();
+  const extension = path.extname(executablePath || "").toLowerCase();
   if (SCRIPT_EXTENSIONS.has(extension)) {
-    return { command: process.execPath, args: [executablePath, ...args], wrapped: true };
+    return {
+      command: process.execPath,
+      args: [executablePath, ...args],
+      wrapped: true,
+    };
   }
   return { command: executablePath, args: [...args], wrapped: false };
 }
@@ -41,7 +45,7 @@ function formatCommand(executablePath, args = []) {
   const { command, args: finalArgs } = resolveCommand(executablePath, args);
   return [command, ...finalArgs]
     .map((part) => (/[\s"]/.test(String(part)) ? `"${part}"` : String(part)))
-    .join(' ');
+    .join(" ");
 }
 
 /** Keeps only the last `maxBytes` of a stream (used for ffmpeg stderr). */
@@ -59,7 +63,7 @@ function createTailBuffer(maxBytes = 16384) {
       }
     },
     toString() {
-      return buffer.toString('utf8');
+      return buffer.toString("utf8");
     },
     get truncated() {
       return totalBytes > maxBytes;
@@ -85,18 +89,18 @@ function waitForExit(child, timeoutMs) {
     let timer = null;
     const cleanup = () => {
       if (timer) clearTimeout(timer);
-      child.removeListener('exit', onExit);
-      child.removeListener('close', onExit);
-      child.removeListener('error', onExit);
+      child.removeListener("exit", onExit);
+      child.removeListener("close", onExit);
+      child.removeListener("error", onExit);
     };
     const onExit = () => {
       cleanup();
       resolve(true);
     };
 
-    child.once('exit', onExit);
-    child.once('close', onExit);
-    child.once('error', onExit);
+    child.once("exit", onExit);
+    child.once("close", onExit);
+    child.once("error", onExit);
 
     if (timeoutMs !== undefined && timeoutMs !== null) {
       timer = setTimeout(() => {
@@ -113,20 +117,20 @@ function spawnProcess(executablePath, args, options = {}) {
   const { command, args: finalArgs } = resolveCommand(executablePath, args);
   const child = spawn(command, finalArgs, {
     windowsHide: true,
-    stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
+    stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     cwd: options.cwd,
-    env: options.env ?? process.env,
+    env: { ...process.env, ...(options.env ?? {}) },
   });
 
   liveChildren.add(child);
   const untrack = () => liveChildren.delete(child);
-  child.once('exit', untrack);
-  child.once('error', untrack);
+  child.once("exit", untrack);
+  child.once("error", untrack);
   return child;
 }
 
 function isWindows() {
-  return process.platform === 'win32';
+  return process.platform === "win32";
 }
 
 /** Best-effort liveness check for a pid recorded in the database. */
@@ -137,7 +141,7 @@ function isProcessAlive(pid) {
     return true;
   } catch (error) {
     // EPERM means the process exists but belongs to another user/session.
-    return error.code === 'EPERM';
+    return error.code === "EPERM";
   }
 }
 
@@ -155,7 +159,7 @@ async function terminateProcessTree(child, options = {}) {
   const { pid } = child;
 
   try {
-    child.kill('SIGTERM');
+    child.kill("SIGTERM");
   } catch (error) {
     logger?.debug?.(`SIGTERM failed for pid ${pid}: ${error.message}`);
   }
@@ -163,12 +167,14 @@ async function terminateProcessTree(child, options = {}) {
 
   if (isWindows() && Number.isInteger(pid) && pid > 0) {
     logger?.debug?.(`forcing taskkill /T /F on pid ${pid}`);
-    await runCommand(DEFAULT_TASKKILL, ['/PID', String(pid), '/T', '/F'], { timeoutMs: 15000 });
+    await runCommand(DEFAULT_TASKKILL, ["/PID", String(pid), "/T", "/F"], {
+      timeoutMs: 15000,
+    });
   }
   if (await waitForExit(child, finalWaitMs)) return true;
 
   try {
-    child.kill('SIGKILL');
+    child.kill("SIGKILL");
   } catch {
     /* already gone */
   }
@@ -186,11 +192,15 @@ async function terminateProcessTree(child, options = {}) {
 async function getProcessImageName(pid) {
   if (!isWindows() || !Number.isInteger(pid) || pid <= 0) return null;
   const tasklist = process.env.SystemRoot
-    ? path.join(process.env.SystemRoot, 'System32', 'tasklist.exe')
-    : 'tasklist.exe';
-  const result = await runCommand(tasklist, ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
-    timeoutMs: 10000,
-  });
+    ? path.join(process.env.SystemRoot, "System32", "tasklist.exe")
+    : "tasklist.exe";
+  const result = await runCommand(
+    tasklist,
+    ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+    {
+      timeoutMs: 10000,
+    },
+  );
   if (result.code !== 0 || result.spawnError) return null;
   const match = /^\s*"([^"]+)"/m.exec(result.stdout);
   return match ? match[1].trim().toLowerCase() : null;
@@ -212,20 +222,26 @@ async function terminatePidTree(pid, options = {}) {
     const image = await getProcessImageName(pid);
     const expected = String(options.expectedImage).toLowerCase();
     if (image === null) {
-      logger?.warn?.(`could not determine what pid ${pid} is; leaving it alone`);
+      logger?.warn?.(
+        `could not determine what pid ${pid} is; leaving it alone`,
+      );
       return false;
     }
     if (!image.includes(expected)) {
-      logger?.warn?.(`pid ${pid} is ${image}, not ${expected}; refusing to kill it`);
+      logger?.warn?.(
+        `pid ${pid} is ${image}, not ${expected}; refusing to kill it`,
+      );
       return false;
     }
   }
 
   if (isWindows()) {
-    await runCommand(DEFAULT_TASKKILL, ['/PID', String(pid), '/T', '/F'], { timeoutMs: 15000 });
+    await runCommand(DEFAULT_TASKKILL, ["/PID", String(pid), "/T", "/F"], {
+      timeoutMs: 15000,
+    });
   } else {
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(pid, "SIGKILL");
     } catch {
       /* ignore */
     }
@@ -261,7 +277,7 @@ function runCommand(executablePath, args, options = {}) {
     let child;
     try {
       child = spawnProcess(executablePath, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ["ignore", "pipe", "pipe"],
         cwd: options.cwd,
         env: options.env,
       });
@@ -269,7 +285,7 @@ function runCommand(executablePath, args, options = {}) {
       return finish({
         code: null,
         signal: null,
-        stdout: '',
+        stdout: "",
         stderrTail: error.message,
         timedOut: false,
         spawnError: error,
@@ -282,7 +298,7 @@ function runCommand(executablePath, args, options = {}) {
         await terminateProcessTree(child, { graceMs: 2000, finalWaitMs: 3000 });
         finish({
           code: null,
-          signal: 'SIGKILL',
+          signal: "SIGKILL",
           stdout: stdout.toString(),
           stderrTail: stderr.toString(),
           timedOut: true,
@@ -291,12 +307,12 @@ function runCommand(executablePath, args, options = {}) {
       }, options.timeoutMs);
     }
 
-    child.stdout?.on('data', (chunk) => stdout.push(chunk));
-    child.stderr?.on('data', (chunk) => stderr.push(chunk));
-    child.stdout?.on('error', () => {});
-    child.stderr?.on('error', () => {});
+    child.stdout?.on("data", (chunk) => stdout.push(chunk));
+    child.stderr?.on("data", (chunk) => stderr.push(chunk));
+    child.stdout?.on("error", () => {});
+    child.stderr?.on("error", () => {});
 
-    child.once('error', (error) =>
+    child.once("error", (error) =>
       finish({
         code: null,
         signal: null,
@@ -306,7 +322,7 @@ function runCommand(executablePath, args, options = {}) {
         spawnError: error,
       }),
     );
-    child.once('close', (code, signal) =>
+    child.once("close", (code, signal) =>
       finish({
         code,
         signal,

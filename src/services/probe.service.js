@@ -59,6 +59,7 @@ function createProbeService({ config, paths, logger, runCommand }) {
         maxOutputBytes: 2 * 1024 * 1024,
         stderrTailBytes: 8192,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       },
     );
 

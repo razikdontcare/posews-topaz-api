@@ -153,6 +153,7 @@ function createRendererService({
         {
           timeoutMs: config.rendererCheckTimeoutMs,
           cwd: config.topazWorkingDir,
+          env: config.topazEnvironment,
         },
       );
       if (fixture.spawnError || fixture.timedOut || fixture.code !== 0) {
@@ -182,6 +183,7 @@ function createRendererService({
       const render = await runCommand(config.ffmpegPath, args, {
         timeoutMs: config.rendererProbeTimeoutMs,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       });
       if (render.spawnError || render.timedOut || render.code !== 0) {
         return {
@@ -308,6 +310,7 @@ function createRendererService({
       {
         timeoutMs: config.rendererCheckTimeoutMs,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       },
     );
     if (versionResult.spawnError) {
@@ -352,6 +355,7 @@ function createRendererService({
       {
         timeoutMs: config.rendererCheckTimeoutMs,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       },
     );
     if (ffprobeResult.spawnError) {
@@ -393,6 +397,7 @@ function createRendererService({
       {
         timeoutMs: config.rendererCheckTimeoutMs,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       },
     );
     probe.tvaiUp = filtersResult.code === 0 && hasFilter(filtersResult.stdout);
@@ -411,6 +416,7 @@ function createRendererService({
       {
         timeoutMs: config.rendererCheckTimeoutMs,
         cwd: config.topazWorkingDir,
+        env: config.topazEnvironment,
       },
     );
     probe.h264Nvenc =
@@ -453,6 +459,7 @@ function createRendererService({
         {
           timeoutMs: config.rendererSelftestTimeoutMs,
           cwd: config.topazWorkingDir,
+          env: config.topazEnvironment,
         },
       );
       probe.nvencWorking =

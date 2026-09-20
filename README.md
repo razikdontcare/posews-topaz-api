@@ -13,11 +13,11 @@ POST /api/v1/jobs  ──►  TEMP_DIR/<jobId>/input.mp4  ──►  SQLite queu
 
 ### Documentation
 
-| Document | Audience |
-| --- | --- |
-| [`docs/API.md`](docs/API.md) | **Frontend team** — complete endpoint reference, error codes, TypeScript types, upload/polling/cancel/download recipes |
-| [`docs/openapi.json`](docs/openapi.json) | Tooling — OpenAPI 3.1 spec (Postman/Insomnia import, client generation); kept in sync by `test/unit/openapi.test.js` |
-| This README | Operators — installation, configuration, PM2, troubleshooting |
+| Document                                 | Audience                                                                                                               |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [`docs/API.md`](docs/API.md)             | **Frontend team** — complete endpoint reference, error codes, TypeScript types, upload/polling/cancel/download recipes |
+| [`docs/openapi.json`](docs/openapi.json) | Tooling — OpenAPI 3.1 spec (Postman/Insomnia import, client generation); kept in sync by `test/unit/openapi.test.js`   |
+| This README                              | Operators — installation, configuration, PM2, troubleshooting                                                          |
 
 ---
 
@@ -39,13 +39,13 @@ POST /api/v1/jobs  ──►  TEMP_DIR/<jobId>/input.mp4  ──►  SQLite queu
 
 ## 1. Requirements
 
-| Requirement | Notes |
-| --- | --- |
-| Windows 10/11 or Windows Server | The whole process/termination/rename logic is Windows aware. |
-| Node.js **>= 22.5** (tested on 24/26) | Uses the built-in `node:sqlite` module — no native build step. |
-| NVIDIA GPU + current driver | Rendering uses `h264_nvenc`; the Topaz models need a CUDA-capable device. |
-| Topaz Video AI installed | Provides the ffmpeg/ffprobe builds with the `tvai_up` filter and the model files. |
-| Disk space | `TEMP_DIR` needs room for the uploaded file, `OUTPUT_DIR` for the render. |
+| Requirement                           | Notes                                                                             |
+| ------------------------------------- | --------------------------------------------------------------------------------- |
+| Windows 10/11 or Windows Server       | The whole process/termination/rename logic is Windows aware.                      |
+| Node.js **>= 22.5** (tested on 24/26) | Uses the built-in `node:sqlite` module — no native build step.                    |
+| NVIDIA GPU + current driver           | Rendering uses `h264_nvenc`; the Topaz models need a CUDA-capable device.         |
+| Topaz Video AI installed              | Provides the ffmpeg/ffprobe builds with the `tvai_up` filter and the model files. |
+| Disk space                            | `TEMP_DIR` needs room for the uploaded file, `OUTPUT_DIR` for the render.         |
 
 Default binaries (never the system `ffmpeg`):
 
@@ -80,68 +80,71 @@ Everything is read once at startup from `.env` / the process environment (`src/c
 
 ### Paths and binaries
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORT` | `3000` | HTTP port. |
-| `HOST` | `0.0.0.0` | Bind address. |
-| `TEMP_DIR` | `D:\VideoTemp` | Uploaded inputs, one folder per job. |
-| `OUTPUT_DIR` | `D:\Hasil Render` | Finished renders (and their temp files). |
-| `DATA_DIR` | `./data` | SQLite database (`jobs.sqlite`). |
-| `LOGS_DIR` | `./logs` | Log files when `LOG_TO_FILE=true`. |
-| `DB_FILE` | `<DATA_DIR>\jobs.sqlite` | Override the database file. |
-| `FFMPEG_PATH` | `C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffmpeg.exe` | Must contain `tvai_up`. |
-| `FFPROBE_PATH` | `C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffprobe.exe` | |
+| Variable               | Default                                                      | Description                                                                                 |
+| ---------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `PORT`                 | `3000`                                                       | HTTP port.                                                                                  |
+| `HOST`                 | `0.0.0.0`                                                    | Bind address.                                                                               |
+| `TEMP_DIR`             | `D:\VideoTemp`                                               | Uploaded inputs, one folder per job.                                                        |
+| `OUTPUT_DIR`           | `D:\Hasil Render`                                            | Finished renders (and their temp files).                                                    |
+| `DATA_DIR`             | `./data`                                                     | SQLite database (`jobs.sqlite`).                                                            |
+| `LOGS_DIR`             | `./logs`                                                     | Log files when `LOG_TO_FILE=true`.                                                          |
+| `DB_FILE`              | `<DATA_DIR>\jobs.sqlite`                                     | Override the database file.                                                                 |
+| `FFMPEG_PATH`          | `C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffmpeg.exe`  | Must contain `tvai_up`.                                                                     |
+| `FFPROBE_PATH`         | `C:\Program Files\Topaz Labs LLC\Topaz Video AI\ffprobe.exe` |                                                                                             |
+| `TOPAZ_WORKING_DIR`    | Topaz installation directory                                 | Working directory for every Topaz child process.                                            |
+| `TOPAZ_MODEL_DIR`      | `C:\ProgramData\Topaz Labs LLC\Topaz Video AI\models`        | Directory containing Topaz model metadata and weights.                                      |
+| `TOPAZ_MODEL_DATA_DIR` | Same as `TOPAZ_MODEL_DIR`                                    | Topaz model data directory; set explicitly when the installation uses a separate data root. |
 
 ### Upload and validation
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MAX_UPLOAD_SIZE_BYTES` | `53687091200` (50 GiB) | Uploads above this are rejected with `413`. |
-| `MIN_DIMENSION` / `MAX_DIMENSION` | `16` / `7680` | Accepted `width`/`height` range. |
-| `ENFORCE_EVEN_DIMENSIONS` | `true` | H.264 `yuv420p` needs even dimensions. |
-| `ALLOWED_VIDEO_EXTENSIONS` | `mp4,mkv,mov,webm,m4v,avi,mpg,mpeg,ts,m2ts` | Extension allowlist (the real check is ffprobe). |
-| `PROBE_TIMEOUT_MS` | `60000` | ffprobe timeout per file. |
+| Variable                          | Default                                     | Description                                      |
+| --------------------------------- | ------------------------------------------- | ------------------------------------------------ |
+| `MAX_UPLOAD_SIZE_BYTES`           | `53687091200` (50 GiB)                      | Uploads above this are rejected with `413`.      |
+| `MIN_DIMENSION` / `MAX_DIMENSION` | `16` / `7680`                               | Accepted `width`/`height` range.                 |
+| `ENFORCE_EVEN_DIMENSIONS`         | `true`                                      | H.264 `yuv420p` needs even dimensions.           |
+| `ALLOWED_VIDEO_EXTENSIONS`        | `mp4,mkv,mov,webm,m4v,avi,mpg,mpeg,ts,m2ts` | Extension allowlist (the real check is ffprobe). |
+| `PROBE_TIMEOUT_MS`                | `60000`                                     | ffprobe timeout per file.                        |
 
 ### Queue and rendering
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `QUEUE_CONCURRENCY` | `1` | **Forced to 1** (one GPU renderer); a different value is ignored with a warning. |
-| `TOPAZ_MODEL` | `prob-3` | Default model used by `tvai_up`. |
-| `ALLOWED_MODELS` | `prob-3,prob-4` | Models a job may select (the default model is always included). |
-| `ALLOW_RENDER_TUNING` | `true` | `false` → `POST /api/v1/jobs` accepts only `video`/`width`/`height` (strict baseline). |
-| `MAX_GPU_INDEX` | `0` | Highest GPU index accepted for the per-job `device` option. |
-| `AUDIO_MODE` | `auto` | Default audio handling: `auto` = stream copy when the codec is mp4-safe, otherwise re-encode to AAC. `copy` / `reencode` force one. Per-job override: `audio`. |
-| `PROGRESS_PERSIST_INTERVAL_MS` | `500` | Throttle for SQLite progress writes. |
-| `RECONCILE_INTERVAL_MS` | `30000` | How often the queue re-syncs with `status = 'queued'`. |
-| `FFMPEG_STDERR_TAIL_BYTES` | `16384` | Bounded ffmpeg stderr kept in memory for diagnostics. |
-| `MAX_STDERR_SUMMARY_LENGTH` | `1000` | Length of the error message stored on a failed job. |
+| Variable                       | Default         | Description                                                                                                                                                    |
+| ------------------------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `QUEUE_CONCURRENCY`            | `1`             | **Forced to 1** (one GPU renderer); a different value is ignored with a warning.                                                                               |
+| `TOPAZ_MODEL`                  | `prob-3`        | Default model used by `tvai_up`.                                                                                                                               |
+| `ALLOWED_MODELS`               | `prob-3,prob-4` | Models a job may select (the default model is always included).                                                                                                |
+| `ALLOW_RENDER_TUNING`          | `true`          | `false` → `POST /api/v1/jobs` accepts only `video`/`width`/`height` (strict baseline).                                                                         |
+| `MAX_GPU_INDEX`                | `0`             | Highest GPU index accepted for the per-job `device` option.                                                                                                    |
+| `AUDIO_MODE`                   | `auto`          | Default audio handling: `auto` = stream copy when the codec is mp4-safe, otherwise re-encode to AAC. `copy` / `reencode` force one. Per-job override: `audio`. |
+| `PROGRESS_PERSIST_INTERVAL_MS` | `500`           | Throttle for SQLite progress writes.                                                                                                                           |
+| `RECONCILE_INTERVAL_MS`        | `30000`         | How often the queue re-syncs with `status = 'queued'`.                                                                                                         |
+| `FFMPEG_STDERR_TAIL_BYTES`     | `16384`         | Bounded ffmpeg stderr kept in memory for diagnostics.                                                                                                          |
+| `MAX_STDERR_SUMMARY_LENGTH`    | `1000`          | Length of the error message stored on a failed job.                                                                                                            |
 
 ### Retention and cleanup
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `JOB_RETENTION_HOURS` | `72` | Completed/cancelled job records older than this are purged. |
-| `FAILED_JOB_RETENTION_HOURS` | `24` | Same for failed jobs (their uploaded input is kept until then). |
-| `TEMP_STALE_HOURS` | `24` | Stale temp folders / orphan `.rendering.mp4` files are removed. |
-| `CLEANUP_INTERVAL_MS` | `1800000` | Periodic cleanup interval (30 min). |
+| Variable                     | Default   | Description                                                     |
+| ---------------------------- | --------- | --------------------------------------------------------------- |
+| `JOB_RETENTION_HOURS`        | `72`      | Completed/cancelled job records older than this are purged.     |
+| `FAILED_JOB_RETENTION_HOURS` | `24`      | Same for failed jobs (their uploaded input is kept until then). |
+| `TEMP_STALE_HOURS`           | `24`      | Stale temp folders / orphan `.rendering.mp4` files are removed. |
+| `CLEANUP_INTERVAL_MS`        | `1800000` | Periodic cleanup interval (30 min).                             |
 
 Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
 
 ### Startup validation
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `RENDERER_SELFTEST` | `true` | Encode with `h264_nvenc` using the same encoder block a render uses, to verify the GPU/driver actually works. |
-| `RENDERER_MODEL_SELFTEST` | `true` | Run the end-to-end probe: render a 1 s generated clip through the exact ffmpeg command a job uses (Topaz model + filter chain + NVENC + muxing). |
-| `RENDERER_SELFTEST_TIMEOUT_MS` | `60000` | Budget for the encoder probe before it is killed and reported as a timeout. |
-| `RENDERER_PROBE_TIMEOUT_MS` | `180000` | Budget for the end-to-end probe (it is a real render, so model loading counts). |
-| `REQUIRE_NVENC` | `true` | Fail startup when `h264_nvenc` is missing from the build. |
-| `ALLOW_DEGRADED_START` | `false` | Start **and accept uploads** even when validation or a self test fails (those jobs will fail at render time). See the note below. |
-| `RENDERER_RECHECK_COOLDOWN_MS` | `60000` | How often an unusable renderer is re-validated in the background. |
-| `SINGLE_INSTANCE` | `true` | Refuse to start while another instance holds the GPU. |
-| `RENDERER_PROCESS_NAME` | `ffmpeg` | Process name checked before a leftover pid is force-killed. |
-| `HTTP_REQUEST_TIMEOUT_MS` | `0` | `0` = no limit (multi-hour uploads must not be cut off). |
+| Variable                       | Default  | Description                                                                                                                                      |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RENDERER_SELFTEST`            | `true`   | Encode with `h264_nvenc` using the same encoder block a render uses, to verify the GPU/driver actually works.                                    |
+| `RENDERER_MODEL_SELFTEST`      | `true`   | Run the end-to-end probe: render a 1 s generated clip through the exact ffmpeg command a job uses (Topaz model + filter chain + NVENC + muxing). |
+| `RENDERER_SELFTEST_TIMEOUT_MS` | `60000`  | Budget for the encoder probe before it is killed and reported as a timeout.                                                                      |
+| `RENDERER_PROBE_TIMEOUT_MS`    | `180000` | Budget for the end-to-end probe (it is a real render, so model loading counts).                                                                  |
+| `REQUIRE_NVENC`                | `true`   | Fail startup when `h264_nvenc` is missing from the build.                                                                                        |
+| `ALLOW_DEGRADED_START`         | `false`  | Start **and accept uploads** even when validation or a self test fails (those jobs will fail at render time). See the note below.                |
+| `RENDERER_RECHECK_COOLDOWN_MS` | `60000`  | How often an unusable renderer is re-validated in the background.                                                                                |
+| `SINGLE_INSTANCE`              | `true`   | Refuse to start while another instance holds the GPU.                                                                                            |
+| `RENDERER_PROCESS_NAME`        | `ffmpeg` | Process name checked before a leftover pid is force-killed.                                                                                      |
+| `HTTP_REQUEST_TIMEOUT_MS`      | `0`      | `0` = no limit (multi-hour uploads must not be cut off).                                                                                         |
 
 > **A failed self test is not a warning.** When `h264_nvenc` cannot be initialised (no NVIDIA driver)
 > or the end-to-end probe fails (missing Topaz model, no GPU access from this process, hung driver),
@@ -161,15 +164,15 @@ Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
 
 ### Lifecycle, HTTP and logging
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SHUTDOWN_POLICY` | `terminate` | `terminate` kills the active render, `wait` lets it finish first. |
-| `SHUTDOWN_TIMEOUT_MS` | `15000` | Budget for the graceful shutdown. |
-| `KILL_GRACE_MS` | `5000` | Grace period before `taskkill /T /F` on cancellation. |
-| `CORS_ORIGIN` | `*` | `*` or a comma separated allowlist. |
-| `JSON_BODY_LIMIT` | `100kb` | Limit for JSON endpoints. |
-| `LOG_LEVEL` | `info` | `error`, `warn`, `info`, `debug`. |
-| `LOG_TO_FILE` | `true` in production | Also write `logs/app-<date>.log`. |
+| Variable              | Default              | Description                                                       |
+| --------------------- | -------------------- | ----------------------------------------------------------------- |
+| `SHUTDOWN_POLICY`     | `terminate`          | `terminate` kills the active render, `wait` lets it finish first. |
+| `SHUTDOWN_TIMEOUT_MS` | `15000`              | Budget for the graceful shutdown.                                 |
+| `KILL_GRACE_MS`       | `5000`               | Grace period before `taskkill /T /F` on cancellation.             |
+| `CORS_ORIGIN`         | `*`                  | `*` or a comma separated allowlist.                               |
+| `JSON_BODY_LIMIT`     | `100kb`              | Limit for JSON endpoints.                                         |
+| `LOG_LEVEL`           | `info`               | `error`, `warn`, `info`, `debug`.                                 |
+| `LOG_TO_FILE`         | `true` in production | Also write `logs/app-<date>.log`.                                 |
 
 ---
 
@@ -190,8 +193,8 @@ On startup the service:
 3. validates the Topaz renderer (`ffmpeg`, `ffprobe`, `tvai_up`, `h264_nvenc`, GPU self test, model
    load). A failed self test does not kill the process, but it does make the renderer unusable: uploads
    are rejected with `503 RENDERER_UNAVAILABLE` and queued jobs wait instead of failing,
-4. recovers interrupted jobs: `processing`/`probing` → `failed` (*"Renderer interrupted by server
-   restart"*), `cancel_requested` → `cancelled`, and every `queued` job is pushed back into the
+4. recovers interrupted jobs: `processing`/`probing` → `failed` (_"Renderer interrupted by server
+   restart"_), `cancel_requested` → `cancelled`, and every `queued` job is pushed back into the
    execution queue in creation order,
 5. starts listening on `PORT`.
 
@@ -256,35 +259,40 @@ Alternatives: `pm2-windows-startup`, `pm2-installer`, or a scheduled task that r
 Base URL: `http://<host>:<port>`. Errors are always:
 
 ```json
-{ "error": { "code": "INVALID_VIDEO", "message": "Uploaded file could not be read as a video." } }
+{
+  "error": {
+    "code": "INVALID_VIDEO",
+    "message": "Uploaded file could not be read as a video."
+  }
+}
 ```
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/v1/jobs` | Multipart upload (`video`, `width`, `height`) → `202` |
-| `GET` | `/api/v1/jobs?page=1&limit=20&status=queued` | Paginated list |
-| `GET` | `/api/v1/jobs/:id` | Full job detail |
-| `GET` | `/api/v1/jobs/:id/progress` | Lightweight polling endpoint |
-| `GET` | `/api/v1/jobs/:id/download` | Streams the finished render |
-| `POST` | `/api/v1/jobs/:id/cancel` | Cancel queued or active job |
-| `DELETE` | `/api/v1/jobs/:id?deleteOutput=true` | Remove a finished job (row, temp data) |
-| `GET` | `/health` | Liveness |
-| `GET` | `/api/v1/system/status` | Renderer + queue status |
+| Method   | Path                                         | Purpose                                               |
+| -------- | -------------------------------------------- | ----------------------------------------------------- |
+| `POST`   | `/api/v1/jobs`                               | Multipart upload (`video`, `width`, `height`) → `202` |
+| `GET`    | `/api/v1/jobs?page=1&limit=20&status=queued` | Paginated list                                        |
+| `GET`    | `/api/v1/jobs/:id`                           | Full job detail                                       |
+| `GET`    | `/api/v1/jobs/:id/progress`                  | Lightweight polling endpoint                          |
+| `GET`    | `/api/v1/jobs/:id/download`                  | Streams the finished render                           |
+| `POST`   | `/api/v1/jobs/:id/cancel`                    | Cancel queued or active job                           |
+| `DELETE` | `/api/v1/jobs/:id?deleteOutput=true`         | Remove a finished job (row, temp data)                |
+| `GET`    | `/health`                                    | Liveness                                              |
+| `GET`    | `/api/v1/system/status`                      | Renderer + queue status                               |
 
 ### Render options
 
 `POST /api/v1/jobs` accepts an optional, **whitelisted** set of tuning fields next to `video`,
 `width` and `height` — never free-form ffmpeg arguments or filter strings (AGENTS.md §11/§12):
 
-| Group | Fields | Per-job override of |
-| --- | --- | --- |
-| Model | `model` | Topaz `tvai_up` model (allowlist via `ALLOWED_MODELS`). |
-| Topaz tunables | `preblur`, `noise`, `details`, `halo`, `blur`, `compression`, `blend` | `tvai_up` parameters, each with a bounded range. |
-| Performance | `device`, `vram`, `instances` | GPU index, low-VRAM mode, model instances. |
-| Encoder | `qp` (1–51), `preset` (p1–p7) | `h264_nvenc` quality knobs. |
-| Audio | `audio` (`auto`/`copy`/`aac`/`reencode`/`none`) | Stream copy, AAC re-encode or dropping the track. |
-| Frame rate | `fps` (1–240, decimals allowed) | Output frame rate via the `fps` filter (frame duplication/dropping — not AI interpolation). Omitted = keep the source rate. |
-| Output name | `filename`, `label` | Client-chosen output name: `filename=sosul eater rev` + 3840×1620 → `sosul eater rev 4K.mp4`. `label` defaults to the resolution class (4K / 1440p / 1080p / 720p / WxH) and can be overridden. |
+| Group          | Fields                                                                | Per-job override of                                                                                                                                                                             |
+| -------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model          | `model`                                                               | Topaz `tvai_up` model (allowlist via `ALLOWED_MODELS`).                                                                                                                                         |
+| Topaz tunables | `preblur`, `noise`, `details`, `halo`, `blur`, `compression`, `blend` | `tvai_up` parameters, each with a bounded range.                                                                                                                                                |
+| Performance    | `device`, `vram`, `instances`                                         | GPU index, low-VRAM mode, model instances.                                                                                                                                                      |
+| Encoder        | `qp` (1–51), `preset` (p1–p7)                                         | `h264_nvenc` quality knobs.                                                                                                                                                                     |
+| Audio          | `audio` (`auto`/`copy`/`aac`/`reencode`/`none`)                       | Stream copy, AAC re-encode or dropping the track.                                                                                                                                               |
+| Frame rate     | `fps` (1–240, decimals allowed)                                       | Output frame rate via the `fps` filter (frame duplication/dropping — not AI interpolation). Omitted = keep the source rate.                                                                     |
+| Output name    | `filename`, `label`                                                   | Client-chosen output name: `filename=sosul eater rev` + 3840×1620 → `sosul eater rev 4K.mp4`. `label` defaults to the resolution class (4K / 1440p / 1080p / 720p / WxH) and can be overridden. |
 
 Every field defaults to the frozen baseline, so a request without options produces exactly the
 documented command. Values are validated before the job is created, stored per job (so a recovered
@@ -295,7 +303,7 @@ Without a custom `filename` the output keeps the automatic naming scheme
 (`source_prob3_3840x1620.mp4`); with one it becomes `sosul eater rev 4K.mp4`. Either way an existing
 file is never overwritten — a collision adds a `_<jobId8>-n` suffix.
 
-> Full field reference for the frontend: [`docs/API.md` → *Render options*](docs/API.md#render-options-optional).
+> Full field reference for the frontend: [`docs/API.md` → _Render options_](docs/API.md#render-options-optional).
 > The live ranges and allowed values are exposed by `GET /api/v1/system/status` → `renderOptions`, so
 > the UI can build the form at runtime.
 
@@ -363,7 +371,10 @@ Completed:
   "id": "769337925-…",
   "status": "completed",
   "progress": 100,
-  "output": { "filename": "sosul eater rev_prob3_3840x1620.mp4", "sizeBytes": 1892344331 },
+  "output": {
+    "filename": "sosul eater rev_prob3_3840x1620.mp4",
+    "sizeBytes": 1892344331
+  },
   "completed": true
 }
 ```
@@ -387,10 +398,10 @@ while the job is still running, `500 OUTPUT_FILE_MISSING` if the file disappeare
 curl.exe -X POST http://localhost:3000/api/v1/jobs/<id>/cancel
 ```
 
-* `queued`/`probing` → `cancelled` immediately (removed from the queue, upload deleted).
-* `processing` → `cancel_requested` → ffmpeg terminated (process tree, `taskkill /T /F`) → `cancelled`,
+- `queued`/`probing` → `cancelled` immediately (removed from the queue, upload deleted).
+- `processing` → `cancel_requested` → ffmpeg terminated (process tree, `taskkill /T /F`) → `cancelled`,
   temp output deleted.
-* Already finished/cancelled → `409 JOB_NOT_CANCELLABLE` / `409 JOB_ALREADY_COMPLETED`.
+- Already finished/cancelled → `409 JOB_NOT_CANCELLABLE` / `409 JOB_ALREADY_COMPLETED`.
 
 ### System status
 
@@ -414,8 +425,16 @@ curl.exe http://localhost:3000/api/v1/system/status
     "renderSelftest": true,
     "activeJobId": "769337925-…"
   },
-  "queue": { "concurrency": 1, "queued": 3, "processing": true, "activeCount": 1, "paused": false },
-  "jobs": { "counts": { "queued": 3, "processing": 1, "completed": 12, "failed": 1 } }
+  "queue": {
+    "concurrency": 1,
+    "queued": 3,
+    "processing": true,
+    "activeCount": 1,
+    "paused": false
+  },
+  "jobs": {
+    "counts": { "queued": 3, "processing": 1, "completed": 12, "failed": 1 }
+  }
 }
 ```
 
@@ -489,13 +508,13 @@ scripts/
 
 Principles:
 
-* HTTP never touches ffmpeg; the worker never touches the response.
-* SQLite is the source of truth for job state, the queue is only the execution mechanism.
-* Uploads are streamed (`pipe` + backpressure), never buffered in memory.
-* Renders go to `OUTPUT_DIR\.<jobId>.rendering.mp4` and are **renamed** to their final name only
+- HTTP never touches ffmpeg; the worker never touches the response.
+- SQLite is the source of truth for job state, the queue is only the execution mechanism.
+- Uploads are streamed (`pipe` + backpressure), never buffered in memory.
+- Renders go to `OUTPUT_DIR\.<jobId>.rendering.mp4` and are **renamed** to their final name only
   after ffmpeg exits `0`, so a partially written file can never look finished.
-* Inputs are validated with the Topaz `ffprobe` before a job is queued.
-* Width/height are validated and injected with an explicit argument builder — never with string
+- Inputs are validated with the Topaz `ffprobe` before a job is queued.
+- Width/height are validated and injected with an explicit argument builder — never with string
   replacement and never through a shell.
 
 ### FFmpeg command
@@ -516,14 +535,14 @@ ffmpeg -hide_banner -nostdin -progress pipe:1 -nostats -y -i <input>
 ```
 
 The three bracketed audio arguments are applied **conditionally** because the raw baseline command
-fails on real inputs: `-map 0:a` makes ffmpeg abort on a silent video (verified: *"Error parsing
-options for output file ... Invalid argument"*), and `-bsf:a:0 aac_adtstoasc` makes it abort on
+fails on real inputs: `-map 0:a` makes ffmpeg abort on a silent video (verified: _"Error parsing
+options for output file ... Invalid argument"_), and `-bsf:a:0 aac_adtstoasc` makes it abort on
 non-AAC audio (verified: AC-3 → exit `-22`). So:
 
-* no audio stream → no audio arguments;
-* AAC audio → the baseline verbatim (`-map 0:a -c:a copy -bsf:a:0 aac_adtstoasc`);
-* other codecs → `-c:a copy` (or `-c:a aac -b:a 192k` when the codec cannot be muxed into mp4);
-* `audio=none` → `-an` (the track is dropped).
+- no audio stream → no audio arguments;
+- AAC audio → the baseline verbatim (`-map 0:a -c:a copy -bsf:a:0 aac_adtstoasc`);
+- other codecs → `-c:a copy` (or `-c:a aac -b:a 192k` when the codec cannot be muxed into mp4);
+- `audio=none` → `-an` (the track is dropped).
 
 Per-job render options only ever change `model`, the `tvai_up` tunables, `device`/`vram`/`instances`,
 `-qp`/`-preset` and the audio mapping above — the structure of the command is fixed, and `w`/`h`
@@ -559,7 +578,7 @@ creating a doomed job.
 Covered: job creation, dimension validation, streaming upload + memory bound, size limit (both the
 `Content-Length` pre-check and the in-flight guard), invalid/audio-only files, queue ordering,
 concurrency = 1, duplicate protection, status transitions, progress parsing (including a burst of
-blocks in one chunk), success/failure/no-output renders, cancellation of queued *and* active jobs
+blocks in one chunk), success/failure/no-output renders, cancellation of queued _and_ active jobs
 including the immediate-cancel race, cleanup and retention, restart recovery, orphan-pid
 termination vs. pid reuse, path traversal, and the single-instance lock.
 
@@ -571,49 +590,49 @@ HTTP responses against the documented schemas.
 
 ## 10. Behaviour notes and limitations
 
-* **One renderer.** `QUEUE_CONCURRENCY` is clamped to `1`; two jobs never use the GPU at once. A
+- **One renderer.** `QUEUE_CONCURRENCY` is clamped to `1`; two jobs never use the GPU at once. A
   second instance of the service is refused while the first holds the lock file
   (`DATA_DIR\video-upscaler.lock`).
-* **Render options are per job and immutable afterwards.** They are stored with the job
+- **Render options are per job and immutable afterwards.** They are stored with the job
   (`render_options` column, JSON) and re-used if the job is re-queued after a restart; changing them
   means uploading again.
-* **Output container is always MP4** (`h264_nvenc` + mp4 muxer flags), so a `.mkv` input still
+- **Output container is always MP4** (`h264_nvenc` + mp4 muxer flags), so a `.mkv` input still
   produces `name_prob3_WxH.mp4` — or the client-provided `<filename> <label>.mp4`.
-* **`fps` converts the frame rate by duplication/dropping.** AI frame interpolation (Topaz `tvai_fi`)
+- **`fps` converts the frame rate by duplication/dropping.** AI frame interpolation (Topaz `tvai_fi`)
   is not part of this option.
-* **Existing renders are never overwritten**: if the name is taken, a `_<jobId>-<n>` suffix is added.
-* **Deleting a job does not delete the render** unless you pass `?deleteOutput=true`.
-* **Failed jobs keep their uploaded input** for `FAILED_JOB_RETENTION_HOURS` (diagnostics); completed
+- **Existing renders are never overwritten**: if the name is taken, a `_<jobId>-<n>` suffix is added.
+- **Deleting a job does not delete the render** unless you pass `?deleteOutput=true`.
+- **Failed jobs keep their uploaded input** for `FAILED_JOB_RETENTION_HOURS` (diagnostics); completed
   and cancelled jobs delete `TEMP_DIR\<jobId>` immediately.
-* **Unknown duration**: if the container exposes neither `format.duration`, stream duration nor
+- **Unknown duration**: if the container exposes neither `format.duration`, stream duration nor
   `nb_frames`, `progress` stays `0` until the render finishes (`progress=100`).
-* **Progress is throttled** to one SQLite write per `PROGRESS_PERSIST_INTERVAL_MS`; the polling
+- **Progress is throttled** to one SQLite write per `PROGRESS_PERSIST_INTERVAL_MS`; the polling
   endpoint returns the fresher in-memory value.
-* **Paths are never returned** to clients: the API exposes filenames only, and configured runtime
+- **Paths are never returned** to clients: the API exposes filenames only, and configured runtime
   directories are redacted (`<temp>`, `<output>`) from error messages.
 
 ---
 
 ## 11. Troubleshooting
 
-| Symptom | Cause / fix |
-| --- | --- |
-| Startup: `Renderer validation failed: tvai_up filter was not found in: …` | `FFMPEG_PATH` points at a normal ffmpeg build. Point it at the Topaz Video AI binary. |
-| Startup: `h264_nvenc was not found` / `Cannot load nvcuda.dll` | No NVIDIA driver (or a remote/headless session without GPU access). Install the driver; the self test then passes. |
-| Startup: `h264_nvenc self test failed: …` (renderer unusable, uploads get `503`) | The deep probe could not open an NVENC session. Read `renderer.reason` in `/api/v1/system/status` and the `NVENC self test command: …` log line, then run that command by hand on the render host — it is the same encoder configuration a render uses, so it reproduces the problem without uploading a video. |
-| Startup: `… did not finish within 60000 ms and was killed (the GPU may be hung)` | The self test timed out instead of erroring. If the GPU is only slow (first NVENC device init right after boot, or a cold model load), raise `RENDERER_SELFTEST_TIMEOUT_MS` / `RENDERER_PROBE_TIMEOUT_MS`; otherwise treat it as a driver problem. |
-| Startup: `Topaz render self test failed: …` | The end-to-end probe (a real render of a 1 s generated clip) failed. Read `renderer.reason` and the `render self test command: …` log line, then run that command by hand on the render host — it is the same command a job runs. |
-| Render fails: `Topaz model is not available: Model not found: prob-3` | Open Topaz Video AI once so it downloads the model, or set `TOPAZ_MODEL` to an installed one. The startup probe (`RENDERER_MODEL_SELFTEST`) reports this before the first upload. Note that models are per-user: the Windows account running the API must be able to read them. |
-| Render fails: `NVIDIA encoder is not available: …` | The driver stopped working or the GPU is busy; the renderer is marked unavailable, the queue pauses, and it retries automatically after `RENDERER_RECHECK_COOLDOWN_MS`. |
-| `413 UPLOAD_TOO_LARGE` | Raise `MAX_UPLOAD_SIZE_BYTES` (default 50 GiB). |
-| `400 … "width" must be an even number` | H.264 yuv420p requires even dimensions; disable with `ENFORCE_EVEN_DIMENSIONS=false` only if your encoder allows it. |
-| `409 JOB_ACTIVE` when deleting | Cancel the job first; deletion is refused only while it is `probing`/`processing`/`cancel_requested` (a `queued` job is cancelled and deleted in one step). |
-| Jobs stay `queued` forever | The queue is paused (check `queue.paused` in `/api/v1/system/status`), usually because the renderer is unavailable. |
-| A job is `failed` with *"Renderer interrupted by server restart"* | Expected after a crash/PM2 restart: interrupted renders are never resumed (they would restart from zero anyway), the uploaded input is kept for `FAILED_JOB_RETENTION_HOURS`. |
-| Leftover `.rendering.mp4` files in `D:\Hasil Render\` | Partially written renders from a crash; removed automatically once they are older than `TEMP_STALE_HOURS`. |
-| `EACCES` on startup / lock error | Another instance is running (`pm2 status`) or a stale `DATA_DIR\video-upscaler.lock` exists with a live pid. |
-| Port already in use | Change `PORT` or stop the other process (`netstat -ano \| findstr :3000`). Note that any other local app can own port 3000 — `npm run smoke` detects that and tells you which service answered. |
-| `npm run smoke`: *"the API is not accepting jobs"* + *suggested `ALLOW_DEGRADED_START=true`* | Working as intended on a machine without a usable GPU/CUDA driver: the self test failed, so uploads are rejected before a job is created. Run against the render host, or use the degraded start for UI work. |
+| Symptom                                                                                      | Cause / fix                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Startup: `Renderer validation failed: tvai_up filter was not found in: …`                    | `FFMPEG_PATH` points at a normal ffmpeg build. Point it at the Topaz Video AI binary.                                                                                                                                                                                                                           |
+| Startup: `h264_nvenc was not found` / `Cannot load nvcuda.dll`                               | No NVIDIA driver (or a remote/headless session without GPU access). Install the driver; the self test then passes.                                                                                                                                                                                              |
+| Startup: `h264_nvenc self test failed: …` (renderer unusable, uploads get `503`)             | The deep probe could not open an NVENC session. Read `renderer.reason` in `/api/v1/system/status` and the `NVENC self test command: …` log line, then run that command by hand on the render host — it is the same encoder configuration a render uses, so it reproduces the problem without uploading a video. |
+| Startup: `… did not finish within 60000 ms and was killed (the GPU may be hung)`             | The self test timed out instead of erroring. If the GPU is only slow (first NVENC device init right after boot, or a cold model load), raise `RENDERER_SELFTEST_TIMEOUT_MS` / `RENDERER_PROBE_TIMEOUT_MS`; otherwise treat it as a driver problem.                                                              |
+| Startup: `Topaz render self test failed: …`                                                  | The end-to-end probe (a real render of a 1 s generated clip) failed. Read `renderer.reason` and the `render self test command: …` log line, then run that command by hand on the render host — it is the same command a job runs.                                                                               |
+| Render fails: `Topaz model is not available: Model not found: prob-3`                        | Open Topaz Video AI once so it downloads the model, or set `TOPAZ_MODEL` to an installed one. The startup probe (`RENDERER_MODEL_SELFTEST`) reports this before the first upload. Note that models are per-user: the Windows account running the API must be able to read them.                                 |
+| Render fails: `NVIDIA encoder is not available: …`                                           | The driver stopped working or the GPU is busy; the renderer is marked unavailable, the queue pauses, and it retries automatically after `RENDERER_RECHECK_COOLDOWN_MS`.                                                                                                                                         |
+| `413 UPLOAD_TOO_LARGE`                                                                       | Raise `MAX_UPLOAD_SIZE_BYTES` (default 50 GiB).                                                                                                                                                                                                                                                                 |
+| `400 … "width" must be an even number`                                                       | H.264 yuv420p requires even dimensions; disable with `ENFORCE_EVEN_DIMENSIONS=false` only if your encoder allows it.                                                                                                                                                                                            |
+| `409 JOB_ACTIVE` when deleting                                                               | Cancel the job first; deletion is refused only while it is `probing`/`processing`/`cancel_requested` (a `queued` job is cancelled and deleted in one step).                                                                                                                                                     |
+| Jobs stay `queued` forever                                                                   | The queue is paused (check `queue.paused` in `/api/v1/system/status`), usually because the renderer is unavailable.                                                                                                                                                                                             |
+| A job is `failed` with _"Renderer interrupted by server restart"_                            | Expected after a crash/PM2 restart: interrupted renders are never resumed (they would restart from zero anyway), the uploaded input is kept for `FAILED_JOB_RETENTION_HOURS`.                                                                                                                                   |
+| Leftover `.rendering.mp4` files in `D:\Hasil Render\`                                        | Partially written renders from a crash; removed automatically once they are older than `TEMP_STALE_HOURS`.                                                                                                                                                                                                      |
+| `EACCES` on startup / lock error                                                             | Another instance is running (`pm2 status`) or a stale `DATA_DIR\video-upscaler.lock` exists with a live pid.                                                                                                                                                                                                    |
+| Port already in use                                                                          | Change `PORT` or stop the other process (`netstat -ano \| findstr :3000`). Note that any other local app can own port 3000 — `npm run smoke` detects that and tells you which service answered.                                                                                                                 |
+| `npm run smoke`: _"the API is not accepting jobs"_ + _suggested `ALLOW_DEGRADED_START=true`_ | Working as intended on a machine without a usable GPU/CUDA driver: the self test failed, so uploads are rejected before a job is created. Run against the render host, or use the degraded start for UI work.                                                                                                   |
 
 Logs are grep-able per job:
 
