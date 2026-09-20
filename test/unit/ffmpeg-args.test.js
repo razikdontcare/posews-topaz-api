@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
+const test = require("node:test");
+const assert = require("node:assert/strict");
 
 const {
   CAPABILITY_COMMANDS,
@@ -18,11 +18,11 @@ const {
   buildTvaiFilter,
   classifyFfmpegFailure,
   summarizeStderr,
-} = require('../../src/utils/ffmpeg');
+} = require("../../src/utils/ffmpeg");
 
 const BOUNDS = { min: 16, max: 7680, enforceEven: true };
-const INPUT = 'D:\\VideoTemp\\769337925\\input.mp4';
-const OUTPUT = 'D:\\Hasil Render\\.769337925.rendering.mp4';
+const INPUT = "D:\\VideoTemp\\769337925\\input.mp4";
+const OUTPUT = "D:\\Hasil Render\\.769337925.rendering.mp4";
 
 function args(overrides = {}) {
   return buildFfmpegArgs({
@@ -35,181 +35,266 @@ function args(overrides = {}) {
   });
 }
 
-test('fps adds an optional frame-rate filter at the end of the chain', () => {
+test("fps adds an optional frame-rate filter at the end of the chain", () => {
   const baseline = args({ hasAudio: false });
-  const baselineFilter = baseline[baseline.indexOf('-filter_complex') + 1];
-  assert.equal(baselineFilter.endsWith('scale=out_color_matrix=bt709'), true);
+  const baselineFilter = baseline[baseline.indexOf("-filter_complex") + 1];
+  assert.equal(baselineFilter.endsWith("scale=out_color_matrix=bt709"), true);
   assert.doesNotMatch(baselineFilter, /fps=/);
 
   const withFps = args({ hasAudio: false, fps: 60 });
   assert.match(
-    withFps[withFps.indexOf('-filter_complex') + 1],
+    withFps[withFps.indexOf("-filter_complex") + 1],
     /,scale=out_color_matrix=bt709,fps=60$/,
   );
 
   // Fractional NTSC rates survive, and only w/h/fps change in the chain.
   const fractional = args({ hasAudio: false, fps: 59.94 });
-  assert.match(fractional[fractional.indexOf('-filter_complex') + 1], /,fps=59\.94$/);
+  assert.match(
+    fractional[fractional.indexOf("-filter_complex") + 1],
+    /,fps=59\.94$/,
+  );
 
-  assert.throws(() => args({ fps: 0 }), /fps must be a number between 1 and 240/);
-  assert.throws(() => args({ fps: 300 }), /fps must be a number between 1 and 240/);
-  assert.throws(() => args({ fps: '60' }), /fps must be a number between 1 and 240/);
-  assert.throws(() => buildFpsFilter(Number.NaN), /fps must be a number between 1 and 240/);
+  assert.throws(
+    () => args({ fps: 0 }),
+    /fps must be a number between 1 and 240/,
+  );
+  assert.throws(
+    () => args({ fps: 300 }),
+    /fps must be a number between 1 and 240/,
+  );
+  assert.throws(
+    () => args({ fps: "60" }),
+    /fps must be a number between 1 and 240/,
+  );
+  assert.throws(
+    () => buildFpsFilter(Number.NaN),
+    /fps must be a number between 1 and 240/,
+  );
 });
 
-test('builds the Topaz baseline command as an argument vector (no shell string)', () => {
-  const result = args({ hasAudio: true, audioCodec: 'aac' });
+test("builds the Topaz baseline command as an argument vector (no shell string)", () => {
+  const result = args({ hasAudio: true, audioCodec: "aac" });
 
   assert.ok(Array.isArray(result));
-  assert.ok(result.every((item) => typeof item === 'string'));
+  assert.ok(result.every((item) => typeof item === "string"));
   assert.equal(result.at(-1), OUTPUT);
 
   assert.deepEqual(result.slice(0, 8), [
-    '-hide_banner',
-    '-nostdin',
-    '-progress',
-    'pipe:1',
-    '-nostats',
-    '-y',
-    '-i',
+    "-hide_banner",
+    "-nostdin",
+    "-progress",
+    "pipe:1",
+    "-nostats",
+    "-y",
+    "-i",
     INPUT,
   ]);
   assert.deepEqual(result.slice(8, 16), [
-    '-sws_flags',
-    'spline+accurate_rnd+full_chroma_int',
-    '-color_trc',
-    '1',
-    '-colorspace',
-    '1',
-    '-color_primaries',
-    '1',
+    "-sws_flags",
+    "spline+accurate_rnd+full_chroma_int",
+    "-color_trc",
+    "1",
+    "-colorspace",
+    "1",
+    "-color_primaries",
+    "1",
   ]);
 
-  const filterIndex = result.indexOf('-filter_complex');
+  const filterIndex = result.indexOf("-filter_complex");
   assert.equal(
     result[filterIndex + 1],
-    'tvai_up=model=prob-3:scale=0:w=3840:h=1620:preblur=-0.100659:noise=0.25:details=0.75:' +
-      'halo=0.05:blur=0.25:compression=0.2:blend=0.6:device=0:vram=1:instances=1,' +
-      'scale=w=3840:h=1620:flags=lanczos:threads=0,scale=out_color_matrix=bt709',
+    "tvai_up=model=prob-3:scale=0:w=3840:h=1620:preblur=-0.100659:noise=0.25:details=0.75:" +
+      "halo=0.05:blur=0.25:compression=0.2:blend=0.6:device=0:vram=1:instances=1," +
+      "scale=w=3840:h=1620:flags=lanczos:threads=0,scale=out_color_matrix=bt709",
   );
 
   // Encoder block, verbatim from the baseline.
   assert.deepEqual(result.slice(filterIndex + 2, filterIndex + 26), [
-    '-c:v', 'h264_nvenc',
-    '-profile:v', 'high',
-    '-pix_fmt', 'yuv420p',
-    '-preset', 'p7',
-    '-tune', 'hq',
-    '-rc', 'constqp',
-    '-qp', '25',
-    '-rc-lookahead', '20',
-    '-spatial_aq', '1',
-    '-temporal_aq', '1',
-    '-aq-strength', '15',
-    '-b:v', '0',
+    "-c:v",
+    "h264_nvenc",
+    "-profile:v",
+    "high",
+    "-pix_fmt",
+    "yuv420p",
+    "-preset",
+    "p7",
+    "-tune",
+    "hq",
+    "-rc",
+    "constqp",
+    "-qp",
+    "25",
+    "-rc-lookahead",
+    "20",
+    "-spatial_aq",
+    "1",
+    "-temporal_aq",
+    "1",
+    "-aq-strength",
+    "15",
+    "-b:v",
+    "0",
   ]);
 
   assert.deepEqual(result.slice(-11), [
-    '-map', '0:a',
-    '-c:a', 'copy',
-    '-bsf:a:0', 'aac_adtstoasc',
-    '-map_metadata', '0',
-    '-movflags',
-    'frag_keyframe+empty_moov+delay_moov+use_metadata_tags+write_colr',
+    "-map",
+    "0:a",
+    "-c:a",
+    "copy",
+    "-bsf:a:0",
+    "aac_adtstoasc",
+    "-map_metadata",
+    "0",
+    "-movflags",
+    "frag_keyframe+empty_moov+delay_moov+use_metadata_tags+write_colr",
     OUTPUT,
   ]);
 });
 
-test('injects width/height into both scale operations and the tvai_up filter', () => {
-  const filter = buildFilterComplex({ width: 1920, height: 1080, model: 'prob-3' });
+test("injects width/height into both scale operations and the tvai_up filter", () => {
+  const filter = buildFilterComplex({
+    width: 1920,
+    height: 1080,
+    model: "prob-3",
+  });
   assert.match(filter, /tvai_up=model=prob-3:scale=0:w=1920:h=1080:/);
   assert.match(filter, /,scale=w=1920:h=1080:flags=lanczos:threads=0,/);
   assert.match(filter, /scale=out_color_matrix=bt709$/);
 
-  const second = buildFilterComplex({ width: 3840, height: 1620, model: 'prob-3' });
+  const second = buildFilterComplex({
+    width: 3840,
+    height: 1620,
+    model: "prob-3",
+  });
   assert.match(second, /w=3840:h=1620/);
   assert.doesNotMatch(second, /1920|1080/);
 
   assert.deepEqual(buildScaleFilters({ width: 640, height: 360 }), [
-    'scale=w=640:h=360:flags=lanczos:threads=0',
-    'scale=out_color_matrix=bt709',
+    "scale=w=640:h=360:flags=lanczos:threads=0",
+    "scale=out_color_matrix=bt709",
   ]);
 });
 
-test('Topaz filter defaults are immutable', () => {
+test("Topaz filter defaults are immutable", () => {
   assert.ok(Object.isFrozen(TOPAZ_FILTER_DEFAULTS));
   assert.throws(() => {
     TOPAZ_FILTER_DEFAULTS.noise = 0.9;
   }, TypeError);
-  assert.equal(buildTvaiFilter({ width: 128, height: 128 }).startsWith('tvai_up=model=prob-3:scale=0:w=128:h=128:preblur=-0.100659'), true);
+  assert.equal(
+    buildTvaiFilter({ width: 128, height: 128 }).startsWith(
+      "tvai_up=model=prob-3:scale=0:w=128:h=128:preblur=-0.100659",
+    ),
+    true,
+  );
 });
 
-test('audio arguments follow the baseline and degrade safely', () => {
-  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: 'aac' }), [
-    '-map', '0:a', '-c:a', 'copy', '-bsf:a:0', 'aac_adtstoasc',
+test("audio arguments follow the baseline and degrade safely", () => {
+  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: "aac" }), [
+    "-map",
+    "0:a",
+    "-c:a",
+    "copy",
+    "-bsf:a:0",
+    "aac_adtstoasc",
   ]);
   // "-map 0:a" makes ffmpeg fail on silent videos, so no audio args at all.
-  assert.deepEqual(buildAudioArguments({ hasAudio: false, audioCodec: null }), []);
+  assert.deepEqual(
+    buildAudioArguments({ hasAudio: false, audioCodec: null }),
+    [],
+  );
   // Unknown stream info: keep the mapping optional and skip the AAC-only filter.
   assert.deepEqual(buildAudioArguments({ hasAudio: null, audioCodec: null }), [
-    '-map', '0:a?', '-c:a', 'copy',
+    "-map",
+    "0:a?",
+    "-c:a",
+    "copy",
   ]);
   // aac_adtstoasc errors out on non-AAC audio (verified against the real
   // Topaz binary: AC-3 + this filter -> "Task finished with error code: -22").
-  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: 'ac3' }), [
-    '-map', '0:a', '-c:a', 'copy',
+  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: "ac3" }), [
+    "-map",
+    "0:a",
+    "-c:a",
+    "copy",
   ]);
   // Non mp4-safe codecs are re-encoded in auto mode.
-  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: 'vorbis' }), [
-    '-map', '0:a', '-c:a', 'aac', '-b:a', '192k',
-  ]);
-  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: 'vorbis', mode: 'copy' }), [
-    '-map', '0:a', '-c:a', 'copy',
-  ]);
-  assert.deepEqual(buildAudioArguments({ hasAudio: true, audioCodec: 'aac', mode: 'reencode' }), [
-    '-map', '0:a', '-c:a', 'aac', '-b:a', '192k',
-  ]);
+  assert.deepEqual(
+    buildAudioArguments({ hasAudio: true, audioCodec: "vorbis" }),
+    ["-map", "0:a", "-c:a", "aac", "-b:a", "192k"],
+  );
+  assert.deepEqual(
+    buildAudioArguments({ hasAudio: true, audioCodec: "vorbis", mode: "copy" }),
+    ["-map", "0:a", "-c:a", "copy"],
+  );
+  assert.deepEqual(
+    buildAudioArguments({
+      hasAudio: true,
+      audioCodec: "aac",
+      mode: "reencode",
+    }),
+    ["-map", "0:a", "-c:a", "aac", "-b:a", "192k"],
+  );
 
   const silent = args({ hasAudio: false, audioCodec: null });
-  assert.equal(silent.includes('-map'), false);
-  assert.equal(silent.includes('-c:a'), false);
-  assert.equal(silent.includes('-bsf:a:0'), false);
+  assert.equal(silent.includes("-map"), false);
+  assert.equal(silent.includes("-c:a"), false);
+  assert.equal(silent.includes("-bsf:a:0"), false);
 });
 
-test('rejects absurd or non-integer dimensions and unsafe model names', () => {
+test("rejects absurd or non-integer dimensions and unsafe model names", () => {
   assert.throws(() => args({ width: 15 }), /width must be between 16 and 7680/);
-  assert.throws(() => args({ width: 7682 }), /width must be between 16 and 7680/);
+  assert.throws(
+    () => args({ width: 7682 }),
+    /width must be between 16 and 7680/,
+  );
   assert.throws(() => args({ width: 1281 }), /even number/);
   assert.throws(() => args({ height: 1081 }), /even number/);
   assert.throws(() => args({ width: 1280.5 }), /integer/);
-  assert.throws(() => args({ width: '1280' }), /integer/);
+  assert.throws(() => args({ width: "1280" }), /integer/);
   // Classic string-injection attempt through a numeric field.
-  assert.throws(() => args({ width: '1280:x=1' }), /integer/);
-  assert.throws(() => args({ model: 'prob-3:w=1,drawtext=text=owned' }), /model/i);
-  assert.throws(() => buildFfmpegArgs({ width: 1280, height: 720, bounds: BOUNDS }), /input path/);
+  assert.throws(() => args({ width: "1280:x=1" }), /integer/);
+  assert.throws(
+    () => args({ model: "prob-3:w=1,drawtext=text=owned" }),
+    /model/i,
+  );
+  assert.throws(
+    () => buildFfmpegArgs({ width: 1280, height: 720, bounds: BOUNDS }),
+    /input path/,
+  );
 });
 
-test('even dimensions can be disabled through configuration', () => {
-  const result = args({ width: 1281, height: 1081, bounds: { ...BOUNDS, enforceEven: false } });
-  const filter = result[result.indexOf('-filter_complex') + 1];
+test("even dimensions can be disabled through configuration", () => {
+  const result = args({
+    width: 1281,
+    height: 1081,
+    bounds: { ...BOUNDS, enforceEven: false },
+  });
+  const filter = result[result.indexOf("-filter_complex") + 1];
   assert.match(filter, /w=1281:h=1081/);
 });
 
-test('probe and self test argument builders stay shell-free', () => {
-  assert.deepEqual(buildProbeArgs('C:\\VideoTemp\\x\\input.mkv'), [
-    '-v', 'error',
-    '-show_entries',
-    'format=duration,format_name:stream=index,codec_type,codec_name,width,height,duration,nb_frames,avg_frame_rate,channels',
-    '-of', 'json',
-    'C:\\VideoTemp\\x\\input.mkv',
+test("probe and self test argument builders stay shell-free", () => {
+  assert.deepEqual(buildProbeArgs("C:\\VideoTemp\\x\\input.mkv"), [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration,format_name:stream=index,codec_type,codec_name,width,height,duration,nb_frames,avg_frame_rate,channels",
+    "-of",
+    "json",
+    "C:\\VideoTemp\\x\\input.mkv",
   ]);
 
   // The probe clip is written by the same ffmpeg, and is a real video file: Topaz's
   // tvai_up is not a normal filter and rejects synthetic frames.
-  const fixture = buildSelftestFixtureArgs({ outputPath: 'C:\\VideoTemp\\renderer-selftest\\input.mp4' });
-  assert.equal(fixture.at(-1), 'C:\\VideoTemp\\renderer-selftest\\input.mp4');
-  assert.equal(fixture[fixture.indexOf('-i') + 1], 'testsrc=size=640x360:rate=25:duration=1');
-  assert.equal(fixture[fixture.indexOf('-c:v') + 1], 'mpeg4');
+  const fixture = buildSelftestFixtureArgs({
+    outputPath: "C:\\VideoTemp\\renderer-selftest\\input.mp4",
+  });
+  assert.equal(fixture.at(-1), "C:\\VideoTemp\\renderer-selftest\\input.mp4");
+  assert.equal(
+    fixture[fixture.indexOf("-i") + 1],
+    "testsrc=size=640x360:rate=25:duration=1",
+  );
+  assert.equal(fixture[fixture.indexOf("-c:v") + 1], "mpeg4");
 });
 
 /*
@@ -220,38 +305,45 @@ test('probe and self test argument builders stay shell-free', () => {
  * `tvai_up` filter writing into the `null` muxer. Both are now replaced by a real
  * render built with `buildFfmpegArgs()`.
  */
-test('the end-to-end probe is the same command a job runs, only smaller', () => {
-  const input = 'C:\\VideoTemp\\renderer-selftest\\input.mp4';
-  const output = 'C:\\VideoTemp\\renderer-selftest\\output.mp4';
-  const probe = buildRenderSelftestArgs({ inputPath: input, outputPath: output, model: 'prob-3' });
+test("the end-to-end probe is the same command a job runs, only smaller", () => {
+  const input = "C:\\VideoTemp\\renderer-selftest\\input.mp4";
+  const output = "C:\\VideoTemp\\renderer-selftest\\output.mp4";
+  const probe = buildRenderSelftestArgs({
+    inputPath: input,
+    outputPath: output,
+    model: "prob-3",
+  });
 
   const job = buildFfmpegArgs({
     inputPath: input,
     outputPath: output,
     width: SELFTEST_CLIP.probeWidth,
     height: SELFTEST_CLIP.probeHeight,
-    model: 'prob-3',
+    model: "prob-3",
     hasAudio: false,
     bounds: BOUNDS,
   });
   assert.deepEqual(probe, job);
 
   // ...and it is a render: a real input, the full filter chain, the real encoder.
-  assert.equal(probe[probe.indexOf('-i') + 1], input);
+  assert.equal(probe[probe.indexOf("-i") + 1], input);
   assert.equal(probe.at(-1), output);
-  const filter = probe[probe.indexOf('-filter_complex') + 1];
+  const filter = probe[probe.indexOf("-filter_complex") + 1];
   assert.match(filter, /^tvai_up=model=prob-3:scale=0:w=1280:h=720:/);
-  assert.match(filter, /,scale=w=1280:h=720:flags=lanczos:threads=0,scale=out_color_matrix=bt709$/);
-  assert.equal(probe[probe.indexOf('-c:v') + 1], 'h264_nvenc');
+  assert.match(
+    filter,
+    /,scale=w=1280:h=720:flags=lanczos:threads=0,scale=out_color_matrix=bt709$/,
+  );
+  assert.equal(probe[probe.indexOf("-c:v") + 1], "h264_nvenc");
   assert.deepEqual(
-    probe.slice(probe.indexOf('-color_trc'), probe.indexOf('-filter_complex')),
+    probe.slice(probe.indexOf("-color_trc"), probe.indexOf("-filter_complex")),
     buildFfmpegArgs({
       inputPath: input,
       outputPath: output,
       width: 1280,
       height: 720,
       bounds: BOUNDS,
-    }).slice(probe.indexOf('-color_trc'), probe.indexOf('-filter_complex')),
+    }).slice(probe.indexOf("-color_trc"), probe.indexOf("-filter_complex")),
   );
 });
 
@@ -259,68 +351,89 @@ test('the end-to-end probe is the same command a job runs, only smaller', () => 
  * The encoder-only probe used to encode a single 128x128 frame with bare encoder
  * settings, which NVENC rejects on some drivers even though a real render works.
  */
-test('the NVENC self test mirrors the encoder block a render uses', () => {
+test("the NVENC self test mirrors the encoder block a render uses", () => {
   const selftest = CAPABILITY_COMMANDS.selftest;
   const render = buildFfmpegArgs({
-    inputPath: 'C:\\VideoTemp\\x\\input.mp4',
-    outputPath: 'C:\\Hasil Render\\.x.rendering.mp4',
+    inputPath: "C:\\VideoTemp\\x\\input.mp4",
+    outputPath: "C:\\Hasil Render\\.x.rendering.mp4",
     width: 640,
     height: 360,
     bounds: BOUNDS,
   });
 
   // Every encoder argument of a baseline render must appear in the probe, in order.
-  const encoderBlock = render.slice(render.indexOf('-c:v'), render.indexOf('-b:v') + 2);
-  const probeStart = selftest.indexOf('-c:v');
-  assert.deepEqual(selftest.slice(probeStart, probeStart + encoderBlock.length), encoderBlock);
+  const encoderBlock = render.slice(
+    render.indexOf("-c:v"),
+    render.indexOf("-b:v") + 2,
+  );
+  const probeStart = selftest.indexOf("-c:v");
+  assert.deepEqual(
+    selftest.slice(probeStart, probeStart + encoderBlock.length),
+    encoderBlock,
+  );
 
   // ...and it has to encode real frames at a size NVENC accepts.
-  const input = selftest[selftest.indexOf('-i') + 1];
+  const input = selftest[selftest.indexOf("-i") + 1];
   assert.match(input, /^nullsrc=s=640x360:r=25$/);
-  assert.equal(selftest[selftest.indexOf('-frames:v') + 1], '30');
-  assert.equal(selftest.at(-1), '-');
-  assert.equal(selftest.at(-2), 'null');
+  assert.equal(selftest[selftest.indexOf("-frames:v") + 1], "30");
+  assert.equal(selftest.at(-1), "-");
+  assert.equal(selftest.at(-2), "null");
 });
 
-test('summary and classification of ffmpeg failures', () => {
+test("summary and classification of ffmpeg failures", () => {
   const tail = [
     "[Parsed_tvai_up_0 @ 000001C79821B000] Model not found: prob-3",
-    '[Parsed_tvai_up_0 @ 000001C79821B000] Failed to configure output pad on Parsed_tvai_up_0',
-    '[fc#0 @ 000001C7948DCA80] Error reinitializing filters!',
-    '[fc#0 @ 000001C7948DCA80] Task finished with error code: -22 (Invalid argument)',
-    '[fc#0 @ 000001C7948DCA80] Terminating thread with return code -22 (Invalid argument)',
-    'Conversion failed!',
-  ].join('\n');
+    "[Parsed_tvai_up_0 @ 000001C79821B000] Failed to configure output pad on Parsed_tvai_up_0",
+    "[fc#0 @ 000001C7948DCA80] Error reinitializing filters!",
+    "[fc#0 @ 000001C7948DCA80] Task finished with error code: -22 (Invalid argument)",
+    "[fc#0 @ 000001C7948DCA80] Terminating thread with return code -22 (Invalid argument)",
+    "Conversion failed!",
+  ].join("\n");
 
   const summary = summarizeStderr(tail, 400);
   assert.match(summary, /Model not found: prob-3/);
   assert.doesNotMatch(summary, /Task finished with error code/);
   assert.doesNotMatch(summary, /Conversion failed/);
   const modelFailure = classifyFfmpegFailure(tail, 400);
-  assert.equal(modelFailure.code, 'RENDERER_UNAVAILABLE');
+  assert.equal(modelFailure.code, "RENDERER_UNAVAILABLE");
   assert.match(modelFailure.message, /Topaz model is not available/);
 
-  const nvenc = classifyFfmpegFailure('[h264_nvenc @ 0] Cannot load nvcuda.dll\nConversion failed!');
-  assert.equal(nvenc.code, 'RENDERER_UNAVAILABLE');
+  const authFailure = classifyFfmpegFailure(
+    "CRITICAL: Cannot open zip file at: C:\\ProgramData\\Topaz Labs LLC\\Topaz Video AI\\models\\auth.tpz\n" +
+      "CRITICAL: Invalid auth file",
+  );
+  assert.equal(authFailure.code, "RENDERER_UNAVAILABLE");
+  assert.match(
+    authFailure.message,
+    /authentication data is missing or invalid/,
+  );
+
+  const nvenc = classifyFfmpegFailure(
+    "[h264_nvenc @ 0] Cannot load nvcuda.dll\nConversion failed!",
+  );
+  assert.equal(nvenc.code, "RENDERER_UNAVAILABLE");
 
   // A filter that cannot initialise is a renderer problem too (the smoke test hit
   // this on a machine without a usable NVIDIA device).
   const filterInit = classifyFfmpegFailure(
     [
-      '[Parsed_tvai_up_0 @ 000001C79821B000] Failed to configure output pad on Parsed_tvai_up_0',
-      '[fc#0 @ 000001C7948DCA80] Failed to inject frame into filter network: Invalid argument',
-      'Error while processing the decoded data for stream #0:0',
-    ].join('\n'),
+      "[Parsed_tvai_up_0 @ 000001C79821B000] Failed to configure output pad on Parsed_tvai_up_0",
+      "[fc#0 @ 000001C7948DCA80] Failed to inject frame into filter network: Invalid argument",
+      "Error while processing the decoded data for stream #0:0",
+    ].join("\n"),
   );
-  assert.equal(filterInit.code, 'RENDERER_UNAVAILABLE');
+  assert.equal(filterInit.code, "RENDERER_UNAVAILABLE");
   assert.match(filterInit.message, /tvai_up filter could not start/);
   assert.match(filterInit.message, /system\/status/);
 
-  const unknown = classifyFfmpegFailure('something odd happened');
-  assert.equal(unknown.code, 'FFMPEG_ERROR');
+  const unknown = classifyFfmpegFailure("something odd happened");
+  assert.equal(unknown.code, "FFMPEG_ERROR");
   assert.match(unknown.message, /FFmpeg exited with an error/);
 
-  assert.equal(summarizeStderr(''), 'FFmpeg did not report any diagnostic output.');
-  const long = summarizeStderr('x'.repeat(5000), 100);
+  assert.equal(
+    summarizeStderr(""),
+    "FFmpeg did not report any diagnostic output.",
+  );
+  const long = summarizeStderr("x".repeat(5000), 100);
   assert.equal(long.length <= 100, true);
 });
