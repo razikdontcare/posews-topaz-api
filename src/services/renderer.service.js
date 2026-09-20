@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Renderer (Topaz Video AI ffmpeg/ffprobe) availability.
@@ -19,8 +19,8 @@
  * `tvai_up` parameters) so a failure here really does predict a failed render.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   CAPABILITY_COMMANDS,
   SELFTEST_CLIP,
@@ -29,14 +29,14 @@ const {
   hasEncoder,
   hasFilter,
   summarizeStderr,
-} = require('../utils/ffmpeg');
-const { formatCommand } = require('../utils/process');
+} = require("../utils/ffmpeg");
+const { formatCommand } = require("../utils/process");
 
 const STATES = Object.freeze({
-  READY: 'ready',
-  DEGRADED: 'degraded',
-  UNAVAILABLE: 'unavailable',
-  UNKNOWN: 'unknown',
+  READY: "ready",
+  DEGRADED: "degraded",
+  UNAVAILABLE: "unavailable",
+  UNKNOWN: "unknown",
 });
 
 /**
@@ -59,7 +59,12 @@ function describeProbeFailure(result, { label, timeoutMs }) {
   );
 }
 
-function createRendererService({ config, logger, runCommand, fileExists = defaultFileExists }) {
+function createRendererService({
+  config,
+  logger,
+  runCommand,
+  fileExists = defaultFileExists,
+}) {
   let status = {
     state: STATES.UNKNOWN,
     available: false,
@@ -135,9 +140,9 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
    * again, also on failure.
    */
   async function runRenderProbe() {
-    const dir = path.join(config.tempDir, 'renderer-selftest');
-    const inputPath = path.join(dir, 'input.mp4');
-    const outputPath = path.join(dir, 'output.mp4');
+    const dir = path.join(config.tempDir, "renderer-selftest");
+    const inputPath = path.join(dir, "input.mp4");
+    const outputPath = path.join(dir, "output.mp4");
 
     try {
       await fs.promises.mkdir(dir, { recursive: true });
@@ -145,15 +150,21 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
       const fixture = await runCommand(
         config.ffmpegPath,
         buildSelftestFixtureArgs({ outputPath: inputPath }),
-        { timeoutMs: config.rendererCheckTimeoutMs },
+        {
+          timeoutMs: config.rendererCheckTimeoutMs,
+          cwd: config.topazWorkingDir,
+        },
       );
       if (fixture.spawnError || fixture.timedOut || fixture.code !== 0) {
         return {
           ok: false,
-          reason: `the probe clip could not be generated: ${describeProbeFailure(fixture, {
-            label: 'the probe clip step',
-            timeoutMs: config.rendererCheckTimeoutMs,
-          })}`,
+          reason: `the probe clip could not be generated: ${describeProbeFailure(
+            fixture,
+            {
+              label: "the probe clip step",
+              timeoutMs: config.rendererCheckTimeoutMs,
+            },
+          )}`,
         };
       }
 
@@ -170,13 +181,14 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
 
       const render = await runCommand(config.ffmpegPath, args, {
         timeoutMs: config.rendererProbeTimeoutMs,
+        cwd: config.topazWorkingDir,
       });
       if (render.spawnError || render.timedOut || render.code !== 0) {
         return {
           ok: false,
           args,
           reason: describeProbeFailure(render, {
-            label: 'the probe render',
+            label: "the probe render",
             timeoutMs: config.rendererProbeTimeoutMs,
           }),
         };
@@ -184,7 +196,11 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
 
       const stat = await fs.promises.stat(outputPath).catch(() => null);
       if (!stat || stat.size === 0) {
-        return { ok: false, args, reason: 'the probe render produced no output file' };
+        return {
+          ok: false,
+          args,
+          reason: "the probe render produced no output file",
+        };
       }
 
       logger?.debug?.(`render self test passed (${stat.size} bytes)`);
@@ -192,7 +208,9 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     } catch (error) {
       return { ok: false, reason: `the probe could not run: ${error.message}` };
     } finally {
-      await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+      await fs.promises
+        .rm(dir, { recursive: true, force: true })
+        .catch(() => {});
     }
   }
 
@@ -236,20 +254,24 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     const ffmpegExists = await fileExists(config.ffmpegPath);
     const ffprobeExists = await fileExists(config.ffprobePath);
     if (!ffmpegExists) {
-      fatalErrors.push(`FFmpeg executable was not found at: ${config.ffmpegPath}`);
+      fatalErrors.push(
+        `FFmpeg executable was not found at: ${config.ffmpegPath}`,
+      );
     }
     if (!ffprobeExists) {
-      fatalErrors.push(`FFprobe executable was not found at: ${config.ffprobePath}`);
+      fatalErrors.push(
+        `FFprobe executable was not found at: ${config.ffprobePath}`,
+      );
     }
     for (const [label, binaryPath] of [
-      ['FFMPEG_PATH', config.ffmpegPath],
-      ['FFPROBE_PATH', config.ffprobePath],
+      ["FFMPEG_PATH", config.ffmpegPath],
+      ["FFPROBE_PATH", config.ffprobePath],
     ]) {
       const parent = path.dirname(binaryPath).toLowerCase();
-      if (!parent.includes('topaz')) {
+      if (!parent.includes("topaz")) {
         warnings.push(
           `${label} does not point inside a Topaz Video AI installation (${binaryPath}); ` +
-            'make sure this is intentional.',
+            "make sure this is intentional.",
         );
       }
     }
@@ -268,21 +290,34 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         checkedAt: new Date().toISOString(),
         warnings,
       };
-      return { ok: false, state: status.state, fatalErrors, warnings, status: snapshot() };
+      return {
+        ok: false,
+        state: status.state,
+        fatalErrors,
+        warnings,
+        status: snapshot(),
+      };
     }
     probe.ffmpeg = true;
     probe.ffprobe = true;
 
     // 3. ffmpeg must actually execute
-    const versionResult = await runCommand(config.ffmpegPath, CAPABILITY_COMMANDS.version, {
-      timeoutMs: config.rendererCheckTimeoutMs,
-    });
+    const versionResult = await runCommand(
+      config.ffmpegPath,
+      CAPABILITY_COMMANDS.version,
+      {
+        timeoutMs: config.rendererCheckTimeoutMs,
+        cwd: config.topazWorkingDir,
+      },
+    );
     if (versionResult.spawnError) {
       fatalErrors.push(
         `FFmpeg could not be executed (${config.ffmpegPath}): ${versionResult.spawnError.message}`,
       );
     } else if (versionResult.timedOut) {
-      fatalErrors.push(`FFmpeg did not respond to -version within the timeout (${config.ffmpegPath}).`);
+      fatalErrors.push(
+        `FFmpeg did not respond to -version within the timeout (${config.ffmpegPath}).`,
+      );
     } else if (versionResult.code !== 0) {
       fatalErrors.push(
         `FFmpeg exited with code ${versionResult.code}: ${summarizeStderr(versionResult.stderrTail, 300)}`,
@@ -301,19 +336,32 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         checkedAt: new Date().toISOString(),
         warnings,
       };
-      return { ok: false, state: status.state, fatalErrors, warnings, status: snapshot() };
+      return {
+        ok: false,
+        state: status.state,
+        fatalErrors,
+        warnings,
+        status: snapshot(),
+      };
     }
 
     // 4. ffprobe must actually execute
-    const ffprobeResult = await runCommand(config.ffprobePath, CAPABILITY_COMMANDS.version, {
-      timeoutMs: config.rendererCheckTimeoutMs,
-    });
+    const ffprobeResult = await runCommand(
+      config.ffprobePath,
+      CAPABILITY_COMMANDS.version,
+      {
+        timeoutMs: config.rendererCheckTimeoutMs,
+        cwd: config.topazWorkingDir,
+      },
+    );
     if (ffprobeResult.spawnError) {
       fatalErrors.push(
         `FFprobe could not be executed (${config.ffprobePath}): ${ffprobeResult.spawnError.message}`,
       );
     } else if (ffprobeResult.timedOut) {
-      fatalErrors.push(`FFprobe did not respond within the timeout (${config.ffprobePath}).`);
+      fatalErrors.push(
+        `FFprobe did not respond within the timeout (${config.ffprobePath}).`,
+      );
     } else if (ffprobeResult.code !== 0) {
       fatalErrors.push(
         `FFprobe exited with code ${ffprobeResult.code}: ${summarizeStderr(ffprobeResult.stderrTail, 300)}`,
@@ -329,31 +377,48 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         checkedAt: new Date().toISOString(),
         warnings,
       };
-      return { ok: false, state: status.state, fatalErrors, warnings, status: snapshot() };
+      return {
+        ok: false,
+        state: status.state,
+        fatalErrors,
+        warnings,
+        status: snapshot(),
+      };
     }
 
     // 5. the Topaz filter must be compiled into this ffmpeg
-    const filtersResult = await runCommand(config.ffmpegPath, CAPABILITY_COMMANDS.filters, {
-      timeoutMs: config.rendererCheckTimeoutMs,
-    });
+    const filtersResult = await runCommand(
+      config.ffmpegPath,
+      CAPABILITY_COMMANDS.filters,
+      {
+        timeoutMs: config.rendererCheckTimeoutMs,
+        cwd: config.topazWorkingDir,
+      },
+    );
     probe.tvaiUp = filtersResult.code === 0 && hasFilter(filtersResult.stdout);
     if (!probe.tvaiUp) {
       fatalErrors.push(
-        'Renderer validation failed:\n' +
-          'tvai_up filter was not found in:\n' +
+        "Renderer validation failed:\n" +
+          "tvai_up filter was not found in:\n" +
           `${config.ffmpegPath}`,
       );
     }
 
     // 6. hardware encoder availability
-    const encodersResult = await runCommand(config.ffmpegPath, CAPABILITY_COMMANDS.encoders, {
-      timeoutMs: config.rendererCheckTimeoutMs,
-    });
-    probe.h264Nvenc = encodersResult.code === 0 && hasEncoder(encodersResult.stdout);
+    const encodersResult = await runCommand(
+      config.ffmpegPath,
+      CAPABILITY_COMMANDS.encoders,
+      {
+        timeoutMs: config.rendererCheckTimeoutMs,
+        cwd: config.topazWorkingDir,
+      },
+    );
+    probe.h264Nvenc =
+      encodersResult.code === 0 && hasEncoder(encodersResult.stdout);
     if (!probe.h264Nvenc) {
       const message =
         `h264_nvenc was not found in: ${config.ffmpegPath}. ` +
-        'An NVIDIA GPU with a current driver is required.';
+        "An NVIDIA GPU with a current driver is required.";
       if (config.requireNvenc) fatalErrors.push(message);
       else warnings.push(message);
     }
@@ -368,7 +433,13 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         checkedAt: new Date().toISOString(),
         warnings,
       };
-      return { ok: false, state: status.state, fatalErrors, warnings, status: snapshot() };
+      return {
+        ok: false,
+        state: status.state,
+        fatalErrors,
+        warnings,
+        status: snapshot(),
+      };
     }
 
     // 7. deep check: can an NVENC session actually be created?
@@ -376,10 +447,16 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     //    warn: the renderer stops accepting jobs (see `available` below).
     const renderBlocker = [];
     if (config.rendererSelftest && probe.h264Nvenc) {
-      const selftest = await runCommand(config.ffmpegPath, CAPABILITY_COMMANDS.selftest, {
-        timeoutMs: config.rendererSelftestTimeoutMs,
-      });
-      probe.nvencWorking = !selftest.spawnError && !selftest.timedOut && selftest.code === 0;
+      const selftest = await runCommand(
+        config.ffmpegPath,
+        CAPABILITY_COMMANDS.selftest,
+        {
+          timeoutMs: config.rendererSelftestTimeoutMs,
+          cwd: config.topazWorkingDir,
+        },
+      );
+      probe.nvencWorking =
+        !selftest.spawnError && !selftest.timedOut && selftest.code === 0;
       if (!probe.nvencWorking) {
         // The command is logged, never returned: it proves the probe matches what a
         // render runs and lets the operator reproduce the failure by hand.
@@ -388,7 +465,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         );
         renderBlocker.push(
           `h264_nvenc self test failed: ${describeProbeFailure(selftest, {
-            label: 'the NVENC check',
+            label: "the NVENC check",
             timeoutMs: config.rendererSelftestTimeoutMs,
           })}`,
         );
@@ -411,7 +488,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
         renderBlocker.push(
           `Topaz render self test failed: ${renderProbe.reason}. The probe renders a ` +
             `${SELFTEST_CLIP.probeSeconds}s clip through the same ffmpeg command a job uses, so a ` +
-            'failure here means renders cannot succeed on this machine.',
+            "failure here means renders cannot succeed on this machine.",
         );
       }
     }
@@ -422,7 +499,12 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     // endpoint and the logs to diagnose it), but the renderer is not *usable*: new
     // uploads are rejected with 503 and queued jobs wait instead of failing.
     const usable = renderBlocker.length === 0;
-    const state = renderBlocker.length > 0 ? STATES.DEGRADED : warnings.length > 0 ? STATES.DEGRADED : STATES.READY;
+    const state =
+      renderBlocker.length > 0
+        ? STATES.DEGRADED
+        : warnings.length > 0
+          ? STATES.DEGRADED
+          : STATES.READY;
     status = {
       ...status,
       state,
@@ -455,7 +537,7 @@ function createRendererService({ config, logger, runCommand, fileExists = defaul
     if (since < config.rendererRecheckCooldownMs) return false;
     const result = await validate();
     if (result.ok && result.usable) {
-      logger?.info?.('renderer is available again');
+      logger?.info?.("renderer is available again");
     }
     return status.available;
   }

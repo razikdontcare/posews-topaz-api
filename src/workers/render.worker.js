@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Render worker.
@@ -14,27 +14,27 @@
  * the queue can move on, and the render service is always cleaned up first.
  */
 
-const fsp = require('node:fs/promises');
-const { isAppError, toAppError } = require('../utils/errors');
+const fsp = require("node:fs/promises");
+const { isAppError, toAppError } = require("../utils/errors");
+const { buildFfmpegArgs, classifyFfmpegFailure } = require("../utils/ffmpeg");
 const {
-  buildFfmpegArgs,
-  classifyFfmpegFailure,
-} = require('../utils/ffmpeg');
-const { FfmpegProgressParser, computeProgressPercent } = require('../utils/ffmpeg-progress');
+  FfmpegProgressParser,
+  computeProgressPercent,
+} = require("../utils/ffmpeg-progress");
 const {
   buildOutputFilename,
   formatBytes,
   renameWithRetry,
   reserveUniqueOutputPath,
   resolutionLabel,
-} = require('../utils/filename');
-const { createTailBuffer, spawnProcess } = require('../utils/process');
-const { JOB_STATUS } = require('../domain/job-status');
+} = require("../utils/filename");
+const { createTailBuffer, spawnProcess } = require("../utils/process");
+const { JOB_STATUS } = require("../domain/job-status");
 const {
   readStoredRenderOptions,
   summarizeRenderOptions,
   toFilterParameters,
-} = require('../domain/render-options');
+} = require("../domain/render-options");
 
 const CLAIMABLE = [JOB_STATUS.QUEUED];
 const ACTIVE_FOR_TERMINAL = [
@@ -44,7 +44,10 @@ const ACTIVE_FOR_TERMINAL = [
   JOB_STATUS.QUEUED,
 ];
 /** Statuses in which a claimed job is still allowed to spawn ffmpeg. */
-const RENDERABLE_STATUSES = new Set([JOB_STATUS.PROBING, JOB_STATUS.PROCESSING]);
+const RENDERABLE_STATUSES = new Set([
+  JOB_STATUS.PROBING,
+  JOB_STATUS.PROCESSING,
+]);
 
 /** Resolves once the child process closed *and* its stdio streams are drained. */
 function waitForChildExit(child) {
@@ -56,10 +59,18 @@ function waitForChildExit(child) {
       resolve(result);
     };
     if (child.exitCode !== null || child.signalCode !== null) {
-      return finish({ code: child.exitCode, signal: child.signalCode, spawnError: null });
+      return finish({
+        code: child.exitCode,
+        signal: child.signalCode,
+        spawnError: null,
+      });
     }
-    child.once('error', (error) => finish({ code: null, signal: null, spawnError: error }));
-    child.once('close', (code, signal) => finish({ code, signal, spawnError: null }));
+    child.once("error", (error) =>
+      finish({ code: null, signal: null, spawnError: error }),
+    );
+    child.once("close", (code, signal) =>
+      finish({ code, signal, spawnError: null }),
+    );
   });
 }
 
@@ -93,7 +104,8 @@ function createProgressPersister({
       elapsed_seconds: latest.elapsedSeconds,
       total_size: latest.totalSize,
     };
-    if (latest.progressPercent !== null) patch.progress_percent = latest.progressPercent;
+    if (latest.progressPercent !== null)
+      patch.progress_percent = latest.progressPercent;
     try {
       repository.update(jobId, patch);
     } catch (error) {
@@ -103,16 +115,22 @@ function createProgressPersister({
 
   function scheduleFlush(delayMs) {
     if (timer || stopped) return;
-    timer = setTimeout(() => {
-      timer = null;
-      persist();
-    }, Math.max(0, delayMs));
+    timer = setTimeout(
+      () => {
+        timer = null;
+        persist();
+      },
+      Math.max(0, delayMs),
+    );
     timer.unref?.();
   }
 
   return {
     update(snapshot) {
-      const progressPercent = computeProgressPercent(snapshot.elapsedSeconds, durationSeconds);
+      const progressPercent = computeProgressPercent(
+        snapshot.elapsedSeconds,
+        durationSeconds,
+      );
       latest = { ...snapshot, progressPercent };
       renderService.updateProgress(jobId, latest);
 
@@ -165,15 +183,20 @@ function createRenderWorker({
   function fail(jobId, code, message, options = {}) {
     const log = options.log || logger?.withJob?.(jobId) || logger;
     const truncated = paths
-      .redact(String(message || 'Render failed.'))
+      .redact(String(message || "Render failed."))
       .slice(0, config.maxStderrSummaryLength * 4);
-    repository.transition(jobId, options.fromStatuses || ACTIVE_FOR_TERMINAL, JOB_STATUS.FAILED, {
-      completed_at: new Date().toISOString(),
-      pid: null,
-      temp_output_path: options.keepTempOutput ? undefined : null,
-      error_code: code,
-      error_message: truncated,
-    });
+    repository.transition(
+      jobId,
+      options.fromStatuses || ACTIVE_FOR_TERMINAL,
+      JOB_STATUS.FAILED,
+      {
+        completed_at: new Date().toISOString(),
+        pid: null,
+        temp_output_path: options.keepTempOutput ? undefined : null,
+        error_code: code,
+        error_message: truncated,
+      },
+    );
     log?.error?.(`failed [${code}] ${truncated}`);
     return { status: JOB_STATUS.FAILED, code };
   }
@@ -191,7 +214,7 @@ function createRenderWorker({
       error_message: null,
     });
     await cleanupService?.removeJobTemp?.(jobId);
-    log?.info?.('cancelled');
+    log?.info?.("cancelled");
     return { status: JOB_STATUS.CANCELLED };
   }
 
@@ -202,23 +225,37 @@ function createRenderWorker({
     try {
       stats = await fsp.stat(tempOutputPath);
     } catch {
-      return fail(jobId, 'FFMPEG_ERROR', 'FFmpeg reported success but the output file is missing.', {
-        log,
-      });
+      return fail(
+        jobId,
+        "FFMPEG_ERROR",
+        "FFmpeg reported success but the output file is missing.",
+        {
+          log,
+        },
+      );
     }
     if (!stats.size) {
       await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
-      return fail(jobId, 'FFMPEG_ERROR', 'FFmpeg produced an empty output file.', { log });
+      return fail(
+        jobId,
+        "FFMPEG_ERROR",
+        "FFmpeg produced an empty output file.",
+        { log },
+      );
     }
 
     // Never overwrite an existing render: reserve an unused name first.
     let reservation;
     try {
-      reservation = await reserveUniqueOutputPath(paths.outputDir, outputFilename, {
-        suffix: jobId.slice(0, 8),
-      });
+      reservation = await reserveUniqueOutputPath(
+        paths.outputDir,
+        outputFilename,
+        {
+          suffix: jobId.slice(0, 8),
+        },
+      );
     } catch (error) {
-      return fail(jobId, error.code || 'FILESYSTEM_ERROR', error.message, {
+      return fail(jobId, error.code || "FILESYSTEM_ERROR", error.message, {
         log,
         keepTempOutput: true,
       });
@@ -228,26 +265,34 @@ function createRenderWorker({
       await renameWithRetry(tempOutputPath, reservation.path);
     } catch (error) {
       await fsp.rm(reservation.path, { force: true }).catch(() => {});
-      return fail(jobId, 'FILESYSTEM_ERROR', error.message, { log, keepTempOutput: true });
+      return fail(jobId, "FILESYSTEM_ERROR", error.message, {
+        log,
+        keepTempOutput: true,
+      });
     }
 
     const finalStats = await fsp.stat(reservation.path).catch(() => stats);
-    const updated = repository.transition(jobId, ACTIVE_FOR_TERMINAL, JOB_STATUS.COMPLETED, {
-      output_path: reservation.path,
-      temp_output_path: null,
-      total_size: finalStats.size,
-      progress_percent: 100,
-      completed_at: new Date().toISOString(),
-      pid: null,
-      error_code: null,
-      error_message: null,
-    });
+    const updated = repository.transition(
+      jobId,
+      ACTIVE_FOR_TERMINAL,
+      JOB_STATUS.COMPLETED,
+      {
+        output_path: reservation.path,
+        temp_output_path: null,
+        total_size: finalStats.size,
+        progress_percent: 100,
+        completed_at: new Date().toISOString(),
+        pid: null,
+        error_code: null,
+        error_message: null,
+      },
+    );
     if (!updated) {
       // The job left the renderable state (cancelled by the client, marked
       // failed by recovery, ...): never leave an unreferenced render behind.
-      log?.warn?.('job was no longer renderable, removing the finished file');
+      log?.warn?.("job was no longer renderable, removing the finished file");
       await fsp.rm(reservation.path, { force: true }).catch(() => {});
-      return { status: 'stale' };
+      return { status: "stale" };
     }
 
     log?.info?.(
@@ -255,7 +300,10 @@ function createRenderWorker({
     );
     // The uploaded input is no longer needed once the render is safely on disk.
     await cleanupService?.removeJobTemp?.(jobId);
-    return { status: JOB_STATUS.COMPLETED, outputFilename: reservation.filename };
+    return {
+      status: JOB_STATUS.COMPLETED,
+      outputFilename: reservation.filename,
+    };
   }
 
   /**
@@ -265,17 +313,17 @@ function createRenderWorker({
    * @returns {null | 'cancelled' | 'stale' | 'shutdown'}
    */
   function abandonmentReason(jobId) {
-    if (renderService.isCancellationRequested(jobId)) return 'cancelled';
+    if (renderService.isCancellationRequested(jobId)) return "cancelled";
     const current = repository.findById(jobId);
-    if (!current) return 'cancelled';
+    if (!current) return "cancelled";
     if (
       current.status === JOB_STATUS.CANCEL_REQUESTED ||
       current.status === JOB_STATUS.CANCELLED
     ) {
-      return 'cancelled';
+      return "cancelled";
     }
-    if (!RENDERABLE_STATUSES.has(current.status)) return 'stale';
-    if (renderService.isShuttingDown()) return 'shutdown';
+    if (!RENDERABLE_STATUSES.has(current.status)) return "stale";
+    if (renderService.isShuttingDown()) return "shutdown";
     return null;
   }
 
@@ -284,8 +332,8 @@ function createRenderWorker({
 
     let job = repository.findById(jobId);
     if (!job) {
-      log?.warn?.('job no longer exists, skipping');
-      return { status: 'missing' };
+      log?.warn?.("job no longer exists, skipping");
+      return { status: "missing" };
     }
     if (!CLAIMABLE.includes(job.status)) {
       log?.debug?.(`not runnable (status=${job.status}), skipping`);
@@ -295,16 +343,20 @@ function createRenderWorker({
     // Never start a new render while the process is shutting down: the job stays
     // queued in SQLite and is picked up again by the next process.
     if (renderService.isShuttingDown()) {
-      log?.info?.('shutdown in progress, leaving job queued');
-      return { status: 'deferred', deferred: true, reason: 'shutting-down' };
+      log?.info?.("shutdown in progress, leaving job queued");
+      return { status: "deferred", deferred: true, reason: "shutting-down" };
     }
 
     // Renderer gate: a broken Topaz/driver setup must not burn through the queue.
     if (!rendererService.isAvailable()) {
       const available = await rendererService.ensureAvailable();
       if (!available) {
-        log?.warn?.('renderer is unavailable; job stays queued');
-        return { status: 'deferred', deferred: true, reason: 'renderer-unavailable' };
+        log?.warn?.("renderer is unavailable; job stays queued");
+        return {
+          status: "deferred",
+          deferred: true,
+          reason: "renderer-unavailable",
+        };
       }
     }
 
@@ -315,18 +367,23 @@ function createRenderWorker({
       (job.has_audio === true && !job.audio_codec);
 
     // Atomic claim: exactly one execution path can move a job out of `queued`.
-    const claimed = repository.transition(jobId, CLAIMABLE, needsProbe ? JOB_STATUS.PROBING : JOB_STATUS.PROCESSING, {
-      started_at: job.started_at || new Date().toISOString(),
-      pid: null,
-      progress_percent: 0,
-      error_code: null,
-      error_message: null,
-    });
+    const claimed = repository.transition(
+      jobId,
+      CLAIMABLE,
+      needsProbe ? JOB_STATUS.PROBING : JOB_STATUS.PROCESSING,
+      {
+        started_at: job.started_at || new Date().toISOString(),
+        pid: null,
+        progress_percent: 0,
+        error_code: null,
+        error_message: null,
+      },
+    );
     if (!claimed) {
-      log?.debug?.('job was claimed by another path, skipping');
-      return { status: 'skipped' };
+      log?.debug?.("job was claimed by another path, skipping");
+      return { status: "skipped" };
     }
-    log?.info?.('started');
+    log?.info?.("started");
     job = repository.findById(jobId) || job;
 
     if (needsProbe) {
@@ -334,7 +391,7 @@ function createRenderWorker({
       try {
         media = await probeService.probe(job.input_path);
       } catch (error) {
-        const appError = toAppError(error, 'FFPROBE_ERROR');
+        const appError = toAppError(error, "FFPROBE_ERROR");
         return fail(jobId, appError.code, appError.message, { log });
       }
       job =
@@ -343,25 +400,35 @@ function createRenderWorker({
           has_audio: media.hasAudio ? 1 : 0,
           audio_codec: media.audioCodec,
         }) || job;
-      repository.transition(jobId, [JOB_STATUS.PROBING], JOB_STATUS.PROCESSING, {});
+      repository.transition(
+        jobId,
+        [JOB_STATUS.PROBING],
+        JOB_STATUS.PROCESSING,
+        {},
+      );
     }
 
     // Cancellation may have arrived while the job was being claimed/probed.
     const preSpawnReason = abandonmentReason(jobId);
-    if (preSpawnReason === 'cancelled') {
+    if (preSpawnReason === "cancelled") {
       return cancelSettlement(jobId, { log });
     }
-    if (preSpawnReason === 'stale') {
-      log?.warn?.('job left the renderable state before ffmpeg was started');
+    if (preSpawnReason === "stale") {
+      log?.warn?.("job left the renderable state before ffmpeg was started");
       return cancelSettlement(jobId, { log });
     }
 
     try {
       await fsp.access(job.input_path);
     } catch {
-      return fail(jobId, 'INPUT_FILE_MISSING', 'The uploaded input file is no longer available.', {
-        log,
-      });
+      return fail(
+        jobId,
+        "INPUT_FILE_MISSING",
+        "The uploaded input file is no longer available.",
+        {
+          log,
+        },
+      );
     }
 
     // Resolve the job's render options once: they drive both the output filename
@@ -374,11 +441,13 @@ function createRenderWorker({
       width: job.width,
       height: job.height,
       model: options.model,
-      extension: '.mp4',
+      extension: ".mp4",
       outputName,
-      label: outputName ? options.label || resolutionLabel(job.width, job.height) : null,
+      label: outputName
+        ? options.label || resolutionLabel(job.width, job.height)
+        : null,
     });
-    const tempOutputPath = paths.tempOutputPath(jobId, '.mp4');
+    const tempOutputPath = paths.tempOutputPath(jobId, ".mp4");
     await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
     repository.update(jobId, { temp_output_path: tempOutputPath });
 
@@ -399,14 +468,22 @@ function createRenderWorker({
         bounds,
       });
     } catch (error) {
-      return fail(jobId, isAppError(error) ? error.code : 'INTERNAL_ERROR', error.message, { log });
+      return fail(
+        jobId,
+        isAppError(error) ? error.code : "INTERNAL_ERROR",
+        error.message,
+        { log },
+      );
     }
 
     log?.debug?.(`render options: ${summarizeRenderOptions(options, config)}`);
 
-    log?.debug?.(`ffmpeg ${config.ffmpegPath} ${args.join(' ')}`);
+    log?.debug?.(`ffmpeg ${config.ffmpegPath} ${args.join(" ")}`);
 
-    const child = spawn(config.ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(config.ffmpegPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: config.topazWorkingDir,
+    });
     renderService.register(jobId, child, {
       pid: child.pid ?? null,
       tempOutputPath,
@@ -422,8 +499,8 @@ function createRenderWorker({
     // window right after `register()`): stop immediately and never report a
     // render that the API already considers finished.
     const postSpawnReason = abandonmentReason(jobId);
-    if (postSpawnReason === 'cancelled' || postSpawnReason === 'stale') {
-      log?.info?.('cancelled while starting ffmpeg, terminating it');
+    if (postSpawnReason === "cancelled" || postSpawnReason === "stale") {
+      log?.info?.("cancelled while starting ffmpeg, terminating it");
       await renderService.stop(jobId, { graceMs: config.killGraceMs });
       return cancelSettlement(jobId, { log, tempOutputPath });
     }
@@ -439,12 +516,12 @@ function createRenderWorker({
       intervalMs: config.progressPersistIntervalMs,
     });
 
-    child.stdout?.on('data', (chunk) => {
+    child.stdout?.on("data", (chunk) => {
       for (const snapshot of parser.push(chunk)) persister.update(snapshot);
     });
-    child.stdout?.on('error', () => {});
-    child.stderr?.on('data', (chunk) => stderrTail.push(chunk));
-    child.stderr?.on('error', () => {});
+    child.stdout?.on("error", () => {});
+    child.stderr?.on("data", (chunk) => stderrTail.push(chunk));
+    child.stderr?.on("error", () => {});
 
     const exit = await waitForChildExit(child);
     persister.stop();
@@ -461,25 +538,34 @@ function createRenderWorker({
     if (exit.spawnError) {
       const reason = `ffmpeg could not be started (${config.ffmpegPath}): ${exit.spawnError.message}`;
       rendererService.markUnavailable(reason);
-      return fail(jobId, 'RENDERER_UNAVAILABLE', reason, { log });
+      return fail(jobId, "RENDERER_UNAVAILABLE", reason, { log });
     }
 
     if (shuttingDown) {
       await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
-      return fail(jobId, 'RENDERER_INTERRUPTED', 'Renderer interrupted by server shutdown', {
-        log,
-      });
+      return fail(
+        jobId,
+        "RENDERER_INTERRUPTED",
+        "Renderer interrupted by server shutdown",
+        {
+          log,
+        },
+      );
     }
 
     if (exit.code !== 0) {
       const stderr = stderrTail.toString();
-      const failure = classifyFfmpegFailure(stderr, config.maxStderrSummaryLength);
+      const failure = classifyFfmpegFailure(
+        stderr,
+        config.maxStderrSummaryLength,
+      );
       log?.error?.(
-        `ffmpeg exited with code ${exit.code}${exit.signal ? ` signal=${exit.signal}` : ''} ` +
+        `ffmpeg exited with code ${exit.code}${exit.signal ? ` signal=${exit.signal}` : ""} ` +
           `(stderr ${stderrTail.length} bytes, truncated=${stderrTail.truncated})`,
       );
       log?.error?.(`ffmpeg stderr tail:\n${stderr.trim()}`);
-      if (failure.code === 'RENDERER_UNAVAILABLE') rendererService.markUnavailable(failure.message);
+      if (failure.code === "RENDERER_UNAVAILABLE")
+        rendererService.markUnavailable(failure.message);
       await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
       return fail(jobId, failure.code, failure.message, { log });
     }
@@ -492,13 +578,15 @@ function createRenderWorker({
     try {
       return await runJob(jobId);
     } catch (error) {
-      log?.error?.(`unexpected renderer error: ${error.stack || error.message}`);
+      log?.error?.(
+        `unexpected renderer error: ${error.stack || error.message}`,
+      );
       // Make sure a half-started render cannot become an orphan process.
       if (renderService.isActive(jobId)) {
-        renderService.requestCancel(jobId, 'renderer error');
+        renderService.requestCancel(jobId, "renderer error");
         await renderService.stop(jobId, { graceMs: 2000 }).catch(() => {});
       }
-      const appError = toAppError(error, 'INTERNAL_ERROR');
+      const appError = toAppError(error, "INTERNAL_ERROR");
       try {
         return fail(jobId, appError.code, appError.message, { log });
       } catch (finalError) {
@@ -514,4 +602,8 @@ function createRenderWorker({
   return { run, runJob, createProgressPersister, waitForChildExit, bounds };
 }
 
-module.exports = { createRenderWorker, createProgressPersister, waitForChildExit };
+module.exports = {
+  createRenderWorker,
+  createProgressPersister,
+  waitForChildExit,
+};

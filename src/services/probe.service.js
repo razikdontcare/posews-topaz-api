@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * FFprobe service.
@@ -11,13 +11,13 @@
  * always with a timeout and bounded output buffers.
  */
 
-const { AppError, errors, toAppError } = require('../utils/errors');
-const { buildProbeArgs, summarizeStderr } = require('../utils/ffmpeg');
+const { AppError, errors, toAppError } = require("../utils/errors");
+const { buildProbeArgs, summarizeStderr } = require("../utils/ffmpeg");
 
 function parseDuration(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
-  if (!normalized || normalized.toUpperCase() === 'N/A') return null;
+  if (!normalized || normalized.toUpperCase() === "N/A") return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
@@ -26,11 +26,17 @@ function parseDuration(value) {
 function parseFrameRate(value) {
   if (!value) return null;
   const normalized = String(value).trim();
-  if (!normalized || normalized === '0/0') return null;
-  const [numerator, denominator] = normalized.split('/');
+  if (!normalized || normalized === "0/0") return null;
+  const [numerator, denominator] = normalized.split("/");
   const top = Number(numerator);
   const bottom = denominator === undefined ? 1 : Number(denominator);
-  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom === 0 || top <= 0) return null;
+  if (
+    !Number.isFinite(top) ||
+    !Number.isFinite(bottom) ||
+    bottom === 0 ||
+    top <= 0
+  )
+    return null;
   return top / bottom;
 }
 
@@ -45,65 +51,98 @@ function createProbeService({ config, paths, logger, runCommand }) {
    */
   async function probe(filePath, options = {}) {
     const timeoutMs = options.timeoutMs ?? config.probeTimeoutMs;
-    const result = await runCommand(config.ffprobePath, buildProbeArgs(filePath), {
-      timeoutMs,
-      maxOutputBytes: 2 * 1024 * 1024,
-      stderrTailBytes: 8192,
-    });
+    const result = await runCommand(
+      config.ffprobePath,
+      buildProbeArgs(filePath),
+      {
+        timeoutMs,
+        maxOutputBytes: 2 * 1024 * 1024,
+        stderrTailBytes: 8192,
+        cwd: config.topazWorkingDir,
+      },
+    );
 
     if (result.spawnError) {
       throw new AppError(
-        'RENDERER_UNAVAILABLE',
+        "RENDERER_UNAVAILABLE",
         `FFprobe could not be started (${config.ffprobePath}): ${result.spawnError.message}`,
         { cause: result.spawnError },
       );
     }
     if (result.timedOut) {
-      throw new AppError('FFPROBE_ERROR', `FFprobe timed out after ${timeoutMs} ms.`);
+      throw new AppError(
+        "FFPROBE_ERROR",
+        `FFprobe timed out after ${timeoutMs} ms.`,
+      );
     }
     if (result.code !== 0) {
-      const summary = summarizeStderr(result.stderrTail, config.maxStderrSummaryLength);
+      const summary = summarizeStderr(
+        result.stderrTail,
+        config.maxStderrSummaryLength,
+      );
       logger?.debug?.(`ffprobe exit ${result.code}: ${summary}`);
-      throw new AppError('INVALID_VIDEO', 'Uploaded file could not be read as a video.', {
-        details: { ffprobe: paths.redact(summary) },
-      });
+      throw new AppError(
+        "INVALID_VIDEO",
+        "Uploaded file could not be read as a video.",
+        {
+          details: { ffprobe: paths.redact(summary) },
+        },
+      );
     }
 
     let parsed;
     try {
       parsed = JSON.parse(result.stdout);
     } catch (error) {
-      throw new AppError('INVALID_VIDEO', 'Uploaded file could not be read as a video.', {
-        details: { reason: 'FFprobe did not return valid JSON.' },
-        cause: error,
-      });
+      throw new AppError(
+        "INVALID_VIDEO",
+        "Uploaded file could not be read as a video.",
+        {
+          details: { reason: "FFprobe did not return valid JSON." },
+          cause: error,
+        },
+      );
     }
 
     const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
-    const videoStream = streams.find((stream) => stream.codec_type === 'video') || null;
-    const audioStreams = streams.filter((stream) => stream.codec_type === 'audio');
+    const videoStream =
+      streams.find((stream) => stream.codec_type === "video") || null;
+    const audioStreams = streams.filter(
+      (stream) => stream.codec_type === "audio",
+    );
 
-    const streamDuration = videoStream ? parseDuration(videoStream.duration) : null;
+    const streamDuration = videoStream
+      ? parseDuration(videoStream.duration)
+      : null;
     // Some containers only expose nb_frames + frame rate: without a duration the
     // progress percentage could never be computed (§18).
     const frameRate = parseFrameRate(videoStream?.avg_frame_rate);
     const totalFrames = parseDuration(videoStream?.nb_frames);
     const estimatedDuration =
-      frameRate && totalFrames ? Number((totalFrames / frameRate).toFixed(3)) : null;
+      frameRate && totalFrames
+        ? Number((totalFrames / frameRate).toFixed(3))
+        : null;
     const durationSeconds =
-      parseDuration(parsed.format?.duration) ?? streamDuration ?? estimatedDuration;
+      parseDuration(parsed.format?.duration) ??
+      streamDuration ??
+      estimatedDuration;
 
     return {
       durationSeconds,
       formatName: parsed.format?.format_name ?? null,
       hasVideo: Boolean(videoStream),
       hasAudio: audioStreams.length > 0,
-      audioCodec: audioStreams.length > 0 ? audioStreams[0].codec_name ?? null : null,
+      audioCodec:
+        audioStreams.length > 0 ? (audioStreams[0].codec_name ?? null) : null,
       video: videoStream
         ? {
             codec: videoStream.codec_name ?? null,
-            width: Number.isFinite(videoStream.width) ? videoStream.width : null,
-            height: Number.isFinite(videoStream.height) ? videoStream.height : null,
+            width: Number.isFinite(videoStream.width)
+              ? videoStream.width
+              : null,
+            height: Number.isFinite(videoStream.height)
+              ? videoStream.height
+              : null,
             avgFrameRate: videoStream.avg_frame_rate ?? null,
           }
         : null,
@@ -125,12 +164,15 @@ function createProbeService({ config, paths, logger, runCommand }) {
     try {
       result = await probe(filePath, options);
     } catch (error) {
-      if (error instanceof AppError && error.code === 'INVALID_VIDEO') throw error;
-      throw toAppError(error, 'FFPROBE_ERROR');
+      if (error instanceof AppError && error.code === "INVALID_VIDEO")
+        throw error;
+      throw toAppError(error, "FFPROBE_ERROR");
     }
 
     if (!result.hasVideo) {
-      throw errors.invalidVideo('Uploaded file does not contain a video stream.');
+      throw errors.invalidVideo(
+        "Uploaded file does not contain a video stream.",
+      );
     }
     return result;
   }
