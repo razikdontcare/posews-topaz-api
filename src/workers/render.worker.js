@@ -220,6 +220,7 @@ function createRenderWorker({
 
   async function complete(jobId, options = {}) {
     const { log, tempOutputPath, outputFilename, job } = options;
+    const outputDir = options.outputDir || paths.outputDir;
 
     let stats;
     try {
@@ -248,7 +249,7 @@ function createRenderWorker({
     let reservation;
     try {
       reservation = await reserveUniqueOutputPath(
-        paths.outputDir,
+        outputDir,
         outputFilename,
         {
           suffix: jobId.slice(0, 8),
@@ -447,7 +448,22 @@ function createRenderWorker({
         ? options.label || resolutionLabel(job.width, job.height)
         : null,
     });
-    const tempOutputPath = paths.tempOutputPath(jobId, ".mp4");
+
+    // Each job renders into its own validated directory: the configured default or
+    // the per-job `outputDir` the client selected when it created the job.
+    const outputDir = paths.outputDirFor(job);
+    try {
+      await paths.ensureOutputDir(outputDir);
+    } catch (error) {
+      return fail(
+        jobId,
+        "FILESYSTEM_ERROR",
+        toAppError(error, "FILESYSTEM_ERROR").message,
+        { log },
+      );
+    }
+
+    const tempOutputPath = paths.tempOutputPath(jobId, ".mp4", outputDir);
     await fsp.rm(tempOutputPath, { force: true }).catch(() => {});
     repository.update(jobId, { temp_output_path: tempOutputPath });
 
@@ -571,7 +587,7 @@ function createRenderWorker({
       return fail(jobId, failure.code, failure.message, { log });
     }
 
-    return complete(jobId, { log, tempOutputPath, outputFilename, job });
+    return complete(jobId, { log, tempOutputPath, outputFilename, job, outputDir });
   }
 
   async function run(jobId) {

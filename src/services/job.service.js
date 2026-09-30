@@ -76,6 +76,8 @@ function createJobService({
         status: JOB_STATUS.QUEUED,
         original_filename: upload.originalFilename,
         input_path: upload.inputPath,
+        // Effective render directory; falls back to the current default output dir.
+        output_dir: upload.outputDir || paths.outputDir,
         width: upload.width,
         height: upload.height,
         duration_seconds: media.durationSeconds,
@@ -102,6 +104,9 @@ function createJobService({
     );
     if (upload.renderOptions) {
       log?.info?.(`options: ${summarizeRenderOptions(upload.renderOptions, config)}`);
+    }
+    if (upload.outputDir && upload.outputDir !== paths.outputDir) {
+      log?.info?.(`output directory: ${paths.redact(upload.outputDir)}`);
     }
 
     queue.enqueue(job.id);
@@ -313,7 +318,7 @@ function createJobService({
     await cleanupService?.removeJobTemp?.(id);
 
     let outputDeleted = false;
-    if (deleteOutput && job.output_path && paths.isInside(paths.outputDir, job.output_path)) {
+    if (deleteOutput && job.output_path && paths.isAllowedOutputDir(job.output_path)) {
       try {
         await fsp.rm(job.output_path, { force: true });
         outputDeleted = true;

@@ -38,8 +38,9 @@ function parseContentLength(header) {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-/** Fields the endpoint understands: dimensions plus the render options (§22). */
-const ACCEPTED_FIELDS = new Set(['width', 'height', ...RENDER_OPTION_FIELDS]);
+/** Fields the endpoint understands: dimensions, output directory plus the render options (§22). */
+const OUTPUT_DIR_FIELD = 'outputdir';
+const ACCEPTED_FIELDS = new Set(['width', 'height', OUTPUT_DIR_FIELD, ...RENDER_OPTION_FIELDS]);
 
 function createUploadService({ config, paths, logger, Busboy = require('busboy') }) {
   const maxBytes = config.maxUploadSizeBytes;
@@ -361,10 +362,24 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
         let width;
         let height;
         let renderOptions;
+        let outputDir;
         try {
           width = parseDimension(fields.width, 'width');
           height = parseDimension(fields.height, 'height');
           renderOptions = parseRenderOptions(fields, config, { width, height });
+          const requestedOutputDir =
+            fields[OUTPUT_DIR_FIELD] === undefined ||
+            String(fields[OUTPUT_DIR_FIELD]).trim() === ''
+              ? undefined
+              : String(fields[OUTPUT_DIR_FIELD]);
+          if (requestedOutputDir !== undefined && !config.allowOutputDirOverride) {
+            throw errors.validation(
+              'This server does not accept a per-job "outputDir"; renders go to the configured output directory.',
+              { field: 'outputDir' },
+            );
+          }
+          // Throws when the directory is not inside OUTPUT_DIR_ALLOWLIST.
+          outputDir = paths.resolveOutputDir(requestedOutputDir);
         } catch (error) {
           await discardUpload(entry);
           return settle(reject, error);
@@ -383,6 +398,7 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
           bytes,
           width,
           height,
+          outputDir,
           renderOptions,
         });
       });
@@ -401,4 +417,4 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
   };
 }
 
-module.exports = { createUploadService, parseContentLength, MULTIPART_OVERHEAD_BYTES };
+module.exports = { createUploadService, parseContentLength, MULTIPART_OVERHEAD_BYTES, OUTPUT_DIR_FIELD };

@@ -15,7 +15,7 @@
   ],
   "tags": [
     { "name": "Jobs", "description": "Create, inspect, cancel, delete and download upscaling jobs." },
-    { "name": "System", "description": "Liveness, renderer health and queue status." }
+    { "name": "System", "description": "Liveness, renderer health, queue status and the default output directory." }
   ],
   "paths": {
     "/health": {
@@ -54,6 +54,49 @@
         }
       }
     },
+    "/api/v1/system/output-dir": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Default output directory",
+        "description": "The directory new jobs render into by default (a per-job `outputDir` still wins). `outputDir` is the effective default, `configured` is `OUTPUT_DIR` from the environment, and `allowedRoots` lists every directory that may be selected (`OUTPUT_DIR` plus `OUTPUT_DIR_ALLOWLIST`).",
+        "operationId": "getOutputDir",
+        "responses": {
+          "200": {
+            "description": "Current effective and configured output directories",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OutputDirResponse" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["System"],
+        "summary": "Change the default output directory",
+        "description": "Sets the destination for **new** jobs; already created jobs keep the directory stored on their row. The value must be inside one of `allowedRoots`, or `null` to reset to `OUTPUT_DIR`. The change is persisted and survives a restart. Answers 400 VALIDATION_ERROR when the path is not allowed or when `ALLOW_OUTPUT_DIR_OVERRIDE=false`.",
+        "operationId": "setOutputDir",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateOutputDirRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new effective default",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OutputDirResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "post": {
         "tags": ["Jobs"],
@@ -87,6 +130,11 @@
                     "minimum": 16,
                     "maximum": 7680,
                     "description": "Target height. Sent as a text part; must be even (yuv420p)."
+                  },
+                  "outputDir": {
+                    "type": "string",
+                    "description": "Directory the render is written to. Either an absolute path inside one of the server's allowed output roots (`OUTPUT_DIR_ALLOWLIST`) or a relative subdirectory (resolved under the default output directory). A path outside every allowed root is rejected with `VALIDATION_ERROR`. Defaults to `OUTPUT_DIR`; ignored when `ALLOW_OUTPUT_DIR_OVERRIDE=false`. Sent as a text part.",
+                    "example": "clients/acme"
                   },
                   "model": {
                     "type": "string",
@@ -529,6 +577,11 @@
           "output": {
             "oneOf": [{ "$ref": "#/components/schemas/JobOutput" }, { "type": "null" }]
           },
+          "outputDir": {
+            "type": ["string", "null"],
+            "description": "Absolute directory the render is (or will be) written to. `null` for jobs created before per-job output directories existed.",
+            "example": "D:\\Hasil Render"
+          },
           "resolution": {
             "type": "object",
             "required": ["width", "height"],
@@ -571,6 +624,10 @@
             "properties": { "filename": { "type": "string" } }
           },
           "output": { "oneOf": [{ "$ref": "#/components/schemas/JobOutput" }, { "type": "null" }] },
+          "outputDir": {
+            "type": ["string", "null"],
+            "description": "Absolute directory the render is (or will be) written to."
+          },
           "resolution": {
             "type": "object",
             "required": ["width", "height"],
@@ -630,6 +687,11 @@
           },
           "width": { "type": "integer", "example": 3840 },
           "height": { "type": "integer", "example": 1620 },
+          "outputDir": {
+            "type": ["string", "null"],
+            "description": "Absolute directory the render will be written to (the resolved `outputDir` field, or the default `OUTPUT_DIR`).",
+            "example": "D:\\Hasil Render"
+          },
           "render": {
             "$ref": "#/components/schemas/RenderOptions",
             "description": "Resolved render options (defaults filled in)."
@@ -701,6 +763,43 @@
           },
           "thresholds": { "$ref": "#/components/schemas/Thresholds" },
           "renderOptions": { "$ref": "#/components/schemas/RenderOptionsDescription" }
+        }
+      },
+      "OutputDirResponse": {
+        "type": "object",
+        "required": ["outputDir", "configured", "allowOverride", "allowedRoots"],
+        "properties": {
+          "outputDir": {
+            "type": "string",
+            "description": "Effective default directory for new jobs.",
+            "example": "D:\\\\Hasil Render"
+          },
+          "configured": {
+            "type": "string",
+            "description": "`OUTPUT_DIR` from the environment (the reset target).",
+            "example": "D:\\\\Hasil Render"
+          },
+          "allowOverride": {
+            "type": "boolean",
+            "description": "`false` when ALLOW_OUTPUT_DIR_OVERRIDE=false: both the per-job `outputDir` field and this endpoint are rejected."
+          },
+          "allowedRoots": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Every directory a render may be written into (`OUTPUT_DIR` plus `OUTPUT_DIR_ALLOWLIST`).",
+            "example": ["D:\\\\Hasil Render", "E:\\\\Renders"]
+          }
+        }
+      },
+      "UpdateOutputDirRequest": {
+        "type": "object",
+        "required": ["outputDir"],
+        "properties": {
+          "outputDir": {
+            "type": ["string", "null"],
+            "description": "New default output directory (absolute, inside an allowed root), or null to reset to `OUTPUT_DIR`.",
+            "example": "E:\\\\Renders"
+          }
         }
       },
       "RendererStatus": {

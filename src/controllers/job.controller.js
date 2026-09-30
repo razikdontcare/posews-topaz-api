@@ -56,6 +56,7 @@ function createJobController({ jobService, uploadService, rendererService }) {
         position,
         width: job.width,
         height: job.height,
+        outputDir: job.output_dir || null,
         render: renderDescriptor(job),
       });
     },

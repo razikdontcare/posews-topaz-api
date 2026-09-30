@@ -20,7 +20,7 @@ const { createRequestIdMiddleware, createRequestLogger } = require('./middleware
 function resolveCorsOptions(config) {
   const origins = config.corsOrigins || ['*'];
   if (origins.includes('*')) {
-    return { origin: '*', methods: ['GET', 'POST', 'DELETE', 'OPTIONS'], maxAge: 86400 };
+    return { origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], maxAge: 86400 };
   }
   const allowed = origins.map((origin) => origin.toLowerCase().replace(/\/$/, ''));
   return {
@@ -29,7 +29,7 @@ function resolveCorsOptions(config) {
       const normalized = origin.toLowerCase().replace(/\/$/, '');
       return callback(null, allowed.includes(normalized));
     },
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     maxAge: 86400,
   };
 }

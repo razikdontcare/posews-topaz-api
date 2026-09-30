@@ -85,7 +85,9 @@ Everything is read once at startup from `.env` / the process environment (`src/c
 | `PORT`                 | `3000`                                                       | HTTP port.                                                                                  |
 | `HOST`                 | `0.0.0.0`                                                    | Bind address.                                                                               |
 | `TEMP_DIR`             | `D:\VideoTemp`                                               | Uploaded inputs, one folder per job.                                                        |
-| `OUTPUT_DIR`           | `D:\Hasil Render`                                            | Finished renders (and their temp files).                                                    |
+| `OUTPUT_DIR`           | `D:\Hasil Render`                                            | Default finished-render directory — changeable at runtime via `PUT /api/v1/system/output-dir`. |
+| `OUTPUT_DIR_ALLOWLIST` | `OUTPUT_DIR`                                                 | Extra roots a per-job `outputDir` may point into (comma separated, e.g. `D:\Hasil Render,E:\Renders`). |
+| `ALLOW_OUTPUT_DIR_OVERRIDE` | `true`                                                 | `false` → clients may not steer the output location: the per-job `outputDir` field **and** `PUT /api/v1/system/output-dir` are rejected. |
 | `DATA_DIR`             | `./data`                                                     | SQLite database (`jobs.sqlite`).                                                            |
 | `LOGS_DIR`             | `./logs`                                                     | Log files when `LOG_TO_FILE=true`.                                                          |
 | `DB_FILE`              | `<DATA_DIR>\jobs.sqlite`                                     | Override the database file.                                                                 |
@@ -129,7 +131,9 @@ Everything is read once at startup from `.env` / the process environment (`src/c
 | `TEMP_STALE_HOURS`           | `24`      | Stale temp folders / orphan `.rendering.mp4` files are removed. |
 | `CLEANUP_INTERVAL_MS`        | `1800000` | Periodic cleanup interval (30 min).                             |
 
-Rendered files in `OUTPUT_DIR` are **never** deleted by cleanup.
+Rendered files are **never** deleted by cleanup — not even the ones written into a per-job
+`outputDir`. Cleanup only sweeps orphan `.rendering.mp4` files and reserved-but-empty placeholders
+inside every configured output root.
 
 ### Startup validation
 
@@ -269,7 +273,7 @@ Base URL: `http://<host>:<port>`. Errors are always:
 
 | Method   | Path                                         | Purpose                                               |
 | -------- | -------------------------------------------- | ----------------------------------------------------- |
-| `POST`   | `/api/v1/jobs`                               | Multipart upload (`video`, `width`, `height`) → `202` |
+| `POST`   | `/api/v1/jobs`                               | Multipart upload (`video`, `width`, `height`, optional `outputDir`) → `202` |
 | `GET`    | `/api/v1/jobs?page=1&limit=20&status=queued` | Paginated list                                        |
 | `GET`    | `/api/v1/jobs/:id`                           | Full job detail                                       |
 | `GET`    | `/api/v1/jobs/:id/progress`                  | Lightweight polling endpoint                          |
@@ -278,6 +282,8 @@ Base URL: `http://<host>:<port>`. Errors are always:
 | `DELETE` | `/api/v1/jobs/:id?deleteOutput=true`         | Remove a finished job (row, temp data)                |
 | `GET`    | `/health`                                    | Liveness                                              |
 | `GET`    | `/api/v1/system/status`                      | Renderer + queue status                               |
+| `GET`    | `/api/v1/system/output-dir`                  | Current default output directory                      |
+| `PUT`    | `/api/v1/system/output-dir`                  | Change the default output directory (persisted)       |
 
 ### Render options
 
@@ -302,6 +308,69 @@ restores the strict “width/height only” behaviour for the whole server.
 Without a custom `filename` the output keeps the automatic naming scheme
 (`source_prob3_3840x1620.mp4`); with one it becomes `sosul eater rev 4K.mp4`. Either way an existing
 file is never overwritten — a collision adds a `_<jobId8>-n` suffix.
+
+### Output directory (optional)
+
+`OUTPUT_DIR` is the default, but the destination can be chosen **without touching the server config or
+restarting anything** — either per job (below) or globally for all future jobs (`PUT
+/api/v1/system/output-dir`).
+
+Per job: send an optional `outputDir` text field next to `video`, `width` and `height`:
+
+- a **relative** value (e.g. `clients/acme` or `2026/09`) is resolved under the *current default output
+directory* (`OUTPUT_DIR` unless it was changed globally),
+- an **absolute** value (e.g. `E:\Renders\acme`) is used as-is.
+
+Whatever the input, the resolved directory must live inside one of the server's allowed output roots:
+`OUTPUT_DIR` plus everything listed in `OUTPUT_DIR_ALLOWLIST`. Anything else is rejected with
+`400 VALIDATION_ERROR` before a job is created, and path traversal (`../../evil`) can never escape the
+roots. The resolved directory is stored on the job (so a recovered job renders to the same place) and
+echoed back as `outputDir` in the create response and in `GET /api/v1/jobs/:id`.
+
+```bat
+curl.exe -X POST http://localhost:3000/api/v1/jobs ^
+  -F "video=@D:\videos\sosul eater rev.mp4" ^
+  -F "width=3840" ^
+  -F "height=1620" ^
+  -F "outputDir=clients/acme"
+```
+
+Set `OUTPUT_DIR_ALLOWLIST` to open up additional drives/folders (e.g.
+`OUTPUT_DIR_ALLOWLIST=D:\Hasil Render,E:\Renders`). Missing subdirectories are created on demand, and
+the temporary `.rendering.mp4` file is written into the same directory so the final rename stays
+atomic.
+
+### Default output directory (global)
+
+Move the default for **new** jobs while the server keeps running — the value is persisted in SQLite
+and restored after a PM2 restart, so no `.env` edit/restart is needed:
+
+```bat
+curl.exe http://localhost:3000/api/v1/system/output-dir
+```
+
+```json
+{
+  "outputDir": "D:\\Hasil Render",
+  "configured": "D:\\Hasil Render",
+  "allowOverride": true,
+  "allowedRoots": ["D:\\Hasil Render", "E:\\Renders"]
+}
+```
+
+```bat
+curl.exe -X PUT http://localhost:3000/api/v1/system/output-dir ^
+  -H "Content-Type: application/json" ^
+  -d "{\"outputDir\": \"E:\\\\Renders\"}"
+```
+
+- the new value must be inside `allowedRoots` (otherwise `400 VALIDATION_ERROR`),
+- `{"outputDir": null}` resets it to the configured `OUTPUT_DIR`,
+- jobs that were already created keep the directory stored on their row,
+- a per-job `outputDir` always wins over the global default.
+
+Set `ALLOW_OUTPUT_DIR_OVERRIDE=false` to pin the output location server-wide; both the per-job field
+and this endpoint are then rejected.
 
 > Full field reference for the frontend: [`docs/API.md` → _Render options_](docs/API.md#render-options-optional).
 > The live ranges and allowed values are exposed by `GET /api/v1/system/status` → `renderOptions`, so
@@ -336,7 +405,8 @@ curl.exe -X POST http://localhost:3000/api/v1/jobs `
   "status": "queued",
   "position": 2,
   "width": 3840,
-  "height": 1620
+  "height": 1620,
+  "outputDir": "D:\\Hasil Render"
 }
 ```
 
@@ -511,8 +581,9 @@ Principles:
 - HTTP never touches ffmpeg; the worker never touches the response.
 - SQLite is the source of truth for job state, the queue is only the execution mechanism.
 - Uploads are streamed (`pipe` + backpressure), never buffered in memory.
-- Renders go to `OUTPUT_DIR\.<jobId>.rendering.mp4` and are **renamed** to their final name only
-  after ffmpeg exits `0`, so a partially written file can never look finished.
+- Renders go to `<outputDir>\.<jobId>.rendering.mp4` and are **renamed** to their final name only
+  after ffmpeg exits `0`, so a partially written file can never look finished. `<outputDir>` is the
+  server's `OUTPUT_DIR` unless the job was created with its own (validated) `outputDir`.
 - Inputs are validated with the Topaz `ffprobe` before a job is queued.
 - Width/height are validated and injected with an explicit argument builder — never with string
   replacement and never through a shell.

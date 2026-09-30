@@ -5,8 +5,17 @@
  */
 
 const { describeRenderOptions } = require('../domain/render-options');
+const { errors } = require('../utils/errors');
 
-function createSystemController({ config, repository, queue, renderService, rendererService, startedAt }) {
+function createSystemController({
+  config,
+  repository,
+  queue,
+  renderService,
+  rendererService,
+  settingsService,
+  startedAt,
+}) {
   function health(req, res) {
     res.json({
       status: 'ok',
@@ -69,7 +78,35 @@ function createSystemController({ config, repository, queue, renderService, rend
     });
   }
 
-  return { health, status };
+  /** `{ "outputDir": string | null }`; null resets to the configured OUTPUT_DIR. */
+  function readOutputDirBody(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !('outputDir' in body)) {
+      throw errors.validation(
+        'Send a JSON body of the form { "outputDir": "E:\\\\Renders" } (or "outputDir": null to reset).',
+        { field: 'outputDir' },
+      );
+    }
+    const value = body.outputDir;
+    if (value !== null && typeof value !== 'string') {
+      throw errors.validation('"outputDir" must be a string, or null to reset it.', {
+        field: 'outputDir',
+      });
+    }
+    return value;
+  }
+
+  /** GET /api/v1/system/output-dir — the current default render directory. */
+  function getOutputDir(req, res) {
+    res.json(settingsService.describe());
+  }
+
+  /** PUT /api/v1/system/output-dir — change the default for new jobs. */
+  function setOutputDir(req, res) {
+    const value = readOutputDirBody(req.body);
+    res.json(settingsService.setOutputDir(value));
+  }
+
+  return { getOutputDir, health, setOutputDir, status };
 }
 
 module.exports = { createSystemController };

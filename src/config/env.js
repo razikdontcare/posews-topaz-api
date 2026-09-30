@@ -29,6 +29,7 @@ const DEFAULTS = Object.freeze({
   ffmpegPath: "C:\\Program Files\\Topaz Labs LLC\\Topaz Video AI\\ffmpeg.exe",
   ffprobePath: "C:\\Program Files\\Topaz Labs LLC\\Topaz Video AI\\ffprobe.exe",
   maxUploadSizeBytes: 53687091200, // 50 GiB
+  allowOutputDirOverride: true,
   queueConcurrency: 1,
   jobRetentionHours: 72,
   failedJobRetentionHours: 24,
@@ -143,6 +144,34 @@ function readList(name, fallback) {
     .filter(Boolean);
 }
 
+/**
+ * Resolves the directories a client is allowed to render into.
+ *
+ * The default output directory is always part of the list; `OUTPUT_DIR_ALLOWLIST`
+ * can add more roots (e.g. `OUTPUT_DIR_ALLOWLIST=D:\Hasil Render,E:\Renders`), so
+ * a deployment can let clients pick a destination without ever letting a request
+ * write outside these roots.
+ */
+function normalizeOutputRoots(values, outputDir, warnings = []) {
+  const roots = [];
+  const add = (value) => {
+    const normalized = normalizePathInput(value, null);
+    if (normalized && !roots.includes(normalized)) roots.push(normalized);
+  };
+  add(outputDir);
+  for (const value of values) {
+    const before = roots.length;
+    add(value);
+    if (roots.length === before) {
+      warnings.push(
+        `OUTPUT_DIR_ALLOWLIST entry "${value}" is not a usable directory (or duplicates an earlier one) ` +
+          "and was ignored.",
+      );
+    }
+  }
+  return roots;
+}
+
 function buildConfig() {
   const warnings = [];
   const nodeEnv = readEnum("NODE_ENV", "development", [
@@ -184,6 +213,12 @@ function buildConfig() {
 
   const dataDir = readPath("DATA_DIR", path.join(PROJECT_ROOT, "data"));
   const logsDir = readPath("LOGS_DIR", path.join(PROJECT_ROOT, "logs"));
+  const outputDir = readPath("OUTPUT_DIR", DEFAULTS.outputDir);
+  const allowedOutputRoots = normalizeOutputRoots(
+    readList("OUTPUT_DIR_ALLOWLIST", []),
+    outputDir,
+    warnings,
+  );
   const topazModelDir = readPath("TOPAZ_MODEL_DIR", DEFAULT_TOPAZ_MODEL_DIR);
   const topazModelDataDir = readPath("TOPAZ_MODEL_DATA_DIR", topazModelDir);
 
@@ -219,7 +254,14 @@ function buildConfig() {
     logsDir,
     dbFile: readPath("DB_FILE", path.join(dataDir, "jobs.sqlite")),
     tempDir: readPath("TEMP_DIR", DEFAULTS.tempDir),
-    outputDir: readPath("OUTPUT_DIR", DEFAULTS.outputDir),
+    outputDir,
+    // Directories a per-job `outputDir` may point into (always includes `outputDir`).
+    allowedOutputRoots: Object.freeze(allowedOutputRoots),
+    // `false` ignores the `outputDir` form field entirely.
+    allowOutputDirOverride: readBool(
+      "ALLOW_OUTPUT_DIR_OVERRIDE",
+      DEFAULTS.allowOutputDirOverride,
+    ),
 
     // Topaz Video AI binaries (never the system ffmpeg)
     ffmpegPath: readPath("FFMPEG_PATH", DEFAULTS.ffmpegPath),
@@ -417,6 +459,16 @@ function createConfig(overrides = {}) {
   });
   if (overrides.dataDir !== undefined && overrides.dbFile === undefined) {
     merged.dbFile = path.join(merged.dataDir, "jobs.sqlite");
+  }
+  if (overrides.allowedOutputRoots !== undefined) {
+    merged.allowedOutputRoots = Object.freeze(
+      normalizeOutputRoots(overrides.allowedOutputRoots, merged.outputDir),
+    );
+  } else if (overrides.outputDir !== undefined) {
+    // Re-derive the allowlist from the new default so tests/tools stay isolated.
+    merged.allowedOutputRoots = Object.freeze(normalizeOutputRoots([], merged.outputDir));
+  } else if (!Array.isArray(merged.allowedOutputRoots) || merged.allowedOutputRoots.length === 0) {
+    merged.allowedOutputRoots = Object.freeze(normalizeOutputRoots([], merged.outputDir));
   }
   if (
     overrides.allowedExtensions !== undefined &&

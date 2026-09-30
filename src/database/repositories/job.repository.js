@@ -21,6 +21,7 @@ const COLUMNS = Object.freeze([
   'input_path',
   'output_path',
   'temp_output_path',
+  'output_dir',
   'width',
   'height',
   'duration_seconds',
@@ -85,6 +86,7 @@ function createJobRepository({ database }) {
       duration_seconds: null,
       output_path: null,
       temp_output_path: null,
+      output_dir: null,
       progress_percent: 0,
       frame: null,
       fps: null,
@@ -217,6 +219,13 @@ function createJobRepository({ database }) {
   function countByOutputPath(outputPath) {
     const row = database.get('SELECT COUNT(*) AS total FROM jobs WHERE output_path = ?', [outputPath]);
     return row ? Number(row.total) : 0;
+  }
+
+  /** Distinct output directories referenced by jobs (used by the cleanup sweep). */
+  function findDistinctOutputDirs() {
+    return database
+      .all("SELECT DISTINCT output_dir FROM jobs WHERE output_dir IS NOT NULL AND output_dir != ''")
+      .map((row) => row.output_dir);
   }
 
   /**
@@ -354,6 +363,7 @@ function createJobRepository({ database }) {
     findById,
     findByStatuses,
     findCancelled,
+    findDistinctOutputDirs,
     findExpired,
     findPipelineIds,
     findQueued,

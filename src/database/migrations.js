@@ -62,6 +62,34 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 3,
+    name: 'add_output_dir',
+    up(database) {
+      // Effective render directory of a job (absolute, validated against
+      // OUTPUT_DIR_ALLOWLIST when the job was created). NULL means the configured
+      // default OUTPUT_DIR.
+      const columns = database.all('PRAGMA table_info(jobs)').map((row) => row.name);
+      if (!columns.includes('output_dir')) {
+        database.exec('ALTER TABLE jobs ADD COLUMN output_dir TEXT');
+      }
+    },
+  },
+  {
+    version: 4,
+    name: 'create_settings_table',
+    up(database) {
+      // Runtime-adjustable settings (e.g. the default output directory) that are
+      // changed through the API and must survive a restart.
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 function currentVersion(database) {

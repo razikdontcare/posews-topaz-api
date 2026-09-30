@@ -4,8 +4,9 @@
  * API serializers.
  *
  * Database rows are snake_case; the HTTP contract is the nested camelCase shape
- * documented in AGENTS.md §32. Filesystem paths are never exposed — only the
- * output *filename* is.
+ * documented in AGENTS.md §32. Server paths are never exposed: the only directory
+ * ever returned is the job's own output directory, which the client selects when
+ * it creates the job (`outputDir`, validated against `OUTPUT_DIR_ALLOWLIST`).
  */
 
 const path = require('node:path');
@@ -62,6 +63,9 @@ function toJobDetail(job, options = {}) {
       filename: job.original_filename,
     },
     output: outputDescriptor(job),
+    // Absolute directory the render is (or will be) written to. `null` for jobs
+    // created before the per-job output directory existed.
+    outputDir: job.output_dir || null,
     resolution: {
       width: job.width,
       height: job.height,

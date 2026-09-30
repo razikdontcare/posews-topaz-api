@@ -48,8 +48,8 @@ function jobPayload(overrides = {}) {
 test('migrations create the jobs table, indexes and are idempotent', async () => {
   const fixture = await createFixture();
   try {
-    assert.deepEqual(fixture.migrations, [1, 2]);
-    assert.equal(currentVersion(fixture.database), 2);
+    assert.deepEqual(fixture.migrations, [1, 2, 3, 4]);
+    assert.equal(currentVersion(fixture.database), 4);
 
     // Running them again must not throw nor re-apply anything.
     assert.deepEqual(runMigrations(fixture.database), []);
@@ -59,6 +59,7 @@ test('migrations create the jobs table, indexes and are idempotent', async () =>
       .map((row) => row.name);
     assert.ok(tables.includes('jobs'));
     assert.ok(tables.includes('schema_migrations'));
+    assert.ok(tables.includes('settings'));
 
     const indexes = fixture.database
       .all("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs'")
@@ -70,6 +71,7 @@ test('migrations create the jobs table, indexes and are idempotent', async () =>
     const columns = fixture.database.all('PRAGMA table_info(jobs)').map((row) => row.name);
     for (const expected of [
       'id', 'status', 'original_filename', 'input_path', 'output_path', 'temp_output_path',
+      'output_dir',
       'width', 'height', 'duration_seconds', 'progress_percent', 'frame', 'fps', 'speed',
       'elapsed_seconds', 'total_size', 'pid', 'error_code', 'error_message', 'render_options',
       'created_at', 'started_at', 'completed_at', 'updated_at',

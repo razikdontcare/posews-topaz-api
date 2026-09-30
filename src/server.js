@@ -26,6 +26,12 @@ async function main() {
   );
   logger.info(`renderer: ffmpeg=${config.ffmpegPath} ffprobe=${config.ffprobePath}`);
   logger.info(`paths: temp=${config.tempDir} output=${config.outputDir} db=${config.dbFile}`);
+  if ((config.allowedOutputRoots || []).length > 1) {
+    logger.info(
+      `per-job outputDir may point into: ${config.allowedOutputRoots.join(' | ')}` +
+        (config.allowOutputDirOverride ? '' : ' (disabled: ALLOW_OUTPUT_DIR_OVERRIDE=false)'),
+    );
+  }
 
   let container;
   try {

@@ -9,7 +9,8 @@
  *    periodically,
  *  - terminal jobs older than their retention window are removed from SQLite.
  *
- * Final rendered files in OUTPUT_DIR are never deleted by cleanup.
+ * Final rendered files are never deleted by cleanup — not even the ones written
+ * into a per-job `outputDir` selected at creation time.
  */
 
 const fsp = require('node:fs/promises');
@@ -56,6 +57,25 @@ function createCleanupService({ config, paths, repository, renderService, logger
     return ids;
   }
 
+  /**
+   * Every directory that may hold render artifacts: the configured default, the
+   * `OUTPUT_DIR_ALLOWLIST` roots and the per-job directories jobs actually used.
+   */
+  function outputScanDirs() {
+    const dirs = new Set();
+    const add = (dir) => {
+      if (typeof dir === 'string' && dir.trim()) dirs.add(dir);
+    };
+    add(paths.outputDir);
+    for (const root of paths.allowedOutputRoots || []) add(root);
+    try {
+      for (const dir of repository.findDistinctOutputDirs()) add(dir);
+    } catch (error) {
+      logger?.warn?.(`could not list job output directories: ${error.message}`);
+    }
+    return [...dirs];
+  }
+
   /** Deletes TEMP_DIR/<jobId> directories older than TEMP_STALE_HOURS. */
   async function cleanupStaleTempDirs() {
     const cutoff = Date.now() - config.tempStaleHours * HOUR_MS;
@@ -89,35 +109,37 @@ function createCleanupService({ config, paths, repository, renderService, logger
     return { removed };
   }
 
-  /** Deletes orphan `.<jobId>.rendering.mp4` files in OUTPUT_DIR. */
+  /** Deletes orphan `.<jobId>.rendering.mp4` files in every output directory. */
   async function cleanupOrphanTempOutputs() {
     const cutoff = Date.now() - config.tempStaleHours * HOUR_MS;
     const protectedIds = protectedJobIds();
     let removed = 0;
 
-    let entries = [];
-    try {
-      entries = await fsp.readdir(paths.outputDir, { withFileTypes: true });
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        logger?.warn?.(`output directory sweep failed: ${error.message}`);
-      }
-      return { removed: 0 };
-    }
-
-    for (const entry of entries) {
-      if (!entry.isFile() || !isRenderingTempFile(entry.name)) continue;
-      const jobId = entry.name.slice(1).split('.')[0];
-      if (protectedIds.has(jobId)) continue;
-      const target = path.join(paths.outputDir, entry.name);
+    for (const dir of outputScanDirs()) {
+      let entries = [];
       try {
-        const stats = await fsp.stat(target);
-        if (stats.mtimeMs > cutoff) continue;
-        await fsp.rm(target, { force: true });
-        removed += 1;
-        logger?.info?.(`removed orphan render file ${entry.name}`);
+        entries = await fsp.readdir(dir, { withFileTypes: true });
       } catch (error) {
-        logger?.warn?.(`could not remove ${target}: ${error.message}`);
+        if (error.code !== 'ENOENT') {
+          logger?.warn?.(`output directory sweep failed (${paths.redact(dir)}): ${error.message}`);
+        }
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !isRenderingTempFile(entry.name)) continue;
+        const jobId = entry.name.slice(1).split('.')[0];
+        if (protectedIds.has(jobId)) continue;
+        const target = path.join(dir, entry.name);
+        try {
+          const stats = await fsp.stat(target);
+          if (stats.mtimeMs > cutoff) continue;
+          await fsp.rm(target, { force: true });
+          removed += 1;
+          logger?.info?.(`removed orphan render file ${entry.name}`);
+        } catch (error) {
+          logger?.warn?.(`could not remove ${paths.redact(target)}: ${error.message}`);
+        }
       }
     }
     return { removed };
@@ -150,31 +172,33 @@ function createCleanupService({ config, paths, repository, renderService, logger
    * job references and older than a minute are touched.
    */
   async function cleanupEmptyOutputFiles() {
-    let entries = [];
-    try {
-      entries = await fsp.readdir(paths.outputDir, { withFileTypes: true });
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        logger?.warn?.(`output directory sweep failed: ${error.message}`);
-      }
-      return { removed: 0 };
-    }
-
     let removed = 0;
-    for (const entry of entries) {
-      if (!entry.isFile() || isRenderingTempFile(entry.name)) continue;
-      const target = path.join(paths.outputDir, entry.name);
-      if (!paths.isInside(paths.outputDir, target)) continue;
+    for (const dir of outputScanDirs()) {
+      let entries = [];
       try {
-        const stats = await fsp.stat(target);
-        if (stats.size !== 0) continue;
-        if (Date.now() - stats.mtimeMs < EMPTY_OUTPUT_MIN_AGE_MS) continue;
-        if (repository.countByOutputPath(target) > 0) continue;
-        await fsp.rm(target, { force: true });
-        removed += 1;
-        logger?.info?.(`removed empty output placeholder ${entry.name}`);
+        entries = await fsp.readdir(dir, { withFileTypes: true });
       } catch (error) {
-        logger?.warn?.(`could not inspect ${target}: ${error.message}`);
+        if (error.code !== 'ENOENT') {
+          logger?.warn?.(`output directory sweep failed (${paths.redact(dir)}): ${error.message}`);
+        }
+        continue;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isFile() || isRenderingTempFile(entry.name)) continue;
+        const target = path.join(dir, entry.name);
+        if (!paths.isInside(dir, target)) continue;
+        try {
+          const stats = await fsp.stat(target);
+          if (stats.size !== 0) continue;
+          if (Date.now() - stats.mtimeMs < EMPTY_OUTPUT_MIN_AGE_MS) continue;
+          if (repository.countByOutputPath(target) > 0) continue;
+          await fsp.rm(target, { force: true });
+          removed += 1;
+          logger?.info?.(`removed empty output placeholder ${entry.name}`);
+        } catch (error) {
+          logger?.warn?.(`could not inspect ${paths.redact(target)}: ${error.message}`);
+        }
       }
     }
     return { removed };

@@ -15,9 +15,11 @@ const { createPaths } = require('./config/paths');
 const { createDatabase } = require('./database/database');
 const { runMigrations } = require('./database/migrations');
 const { createJobRepository } = require('./database/repositories/job.repository');
+const { createSettingsRepository } = require('./database/repositories/settings.repository');
 const { createRendererService } = require('./services/renderer.service');
 const { createProbeService } = require('./services/probe.service');
 const { createRenderService } = require('./services/render.service');
+const { createSettingsService } = require('./services/settings.service');
 const { createUploadService } = require('./services/upload.service');
 const { createCleanupService } = require('./services/cleanup.service');
 const { createJobService } = require('./services/job.service');
@@ -49,6 +51,17 @@ function createContainer(config, options = {}) {
   const database = createDatabase({ file: config.dbFile, logger });
   runMigrations(database, logger);
   const repository = createJobRepository({ database });
+
+  // Runtime settings (e.g. the default output directory) are applied before any
+  // other service is built, so uploads/worker/cleanup see the right value.
+  const settingsRepository = createSettingsRepository({ database });
+  const settingsService = createSettingsService({
+    config,
+    paths,
+    repository: settingsRepository,
+    logger: logger.child('settings'),
+  });
+  settingsService.load();
 
   const rendererService = createRendererService({
     config,
@@ -132,6 +145,7 @@ function createContainer(config, options = {}) {
     queue,
     renderService,
     rendererService,
+    settingsService,
     startedAt: Date.now(),
   });
 
@@ -166,6 +180,8 @@ function createContainer(config, options = {}) {
     renderService,
     rendererService,
     repository,
+    settingsRepository,
+    settingsService,
     uploadService,
     worker,
     dispose,

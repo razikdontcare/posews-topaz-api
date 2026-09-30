@@ -74,8 +74,8 @@ test('openapi.json is a valid OpenAPI 3.1 document', () => {
   const operations = Object.values(spec.paths).flatMap((item) =>
     Object.keys(item).filter((key) => ['get', 'post', 'put', 'patch', 'delete'].includes(key)),
   );
-  assert.equal(operations.length, 9, 'every operation must be documented');
-  assert.equal(Object.keys(spec.paths).length, 7, 'every endpoint must be documented');
+  assert.equal(operations.length, 11, 'every operation must be documented');
+  assert.equal(Object.keys(spec.paths).length, 8, 'every endpoint must be documented');
   assert.equal(Object.keys(spec.components.schemas).length >= 15, true);
 });
 
@@ -242,6 +242,7 @@ test('the create / health / system status schemas cover the documented payloads'
   assert.deepEqual(schemaProperties(spec.components.schemas.CreateJobResponse).sort(), [
     'height',
     'id',
+    'outputDir',
     'position',
     'render',
     'status',
@@ -266,6 +267,15 @@ test('the create / health / system status schemas cover the documented payloads'
     'deleted',
     'id',
     'outputDeleted',
+  ]);
+  assert.deepEqual(schemaProperties(spec.components.schemas.OutputDirResponse).sort(), [
+    'allowOverride',
+    'allowedRoots',
+    'configured',
+    'outputDir',
+  ]);
+  assert.deepEqual(schemaProperties(spec.components.schemas.UpdateOutputDirRequest).sort(), [
+    'outputDir',
   ]);
   assert.deepEqual(schemaProperties(spec.components.schemas.ApiErrorResponse), ['error']);
   assert.deepEqual(schemaProperties(spec.components.schemas.JobListResponse).sort(), [

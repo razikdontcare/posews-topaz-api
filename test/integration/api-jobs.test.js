@@ -162,7 +162,7 @@ test('GET /api/v1/jobs/:id returns the documented detail shape', async (t) => {
   const detail = await server.api(`/api/v1/jobs/${jobId}`);
   assert.equal(detail.status, 200);
   assert.deepEqual(Object.keys(detail.body).sort(), [
-    'error', 'id', 'input', 'output', 'progress', 'render', 'resolution', 'status', 'timestamps',
+    'error', 'id', 'input', 'output', 'outputDir', 'progress', 'render', 'resolution', 'status', 'timestamps',
   ]);
   assert.equal(detail.body.id, jobId);
   assert.equal(detail.body.status, 'completed');

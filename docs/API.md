@@ -18,7 +18,7 @@ upscaled result.
 3. [Error reference](#3-error-reference)
 4. [Job status reference](#4-job-status-reference)
 5. [Endpoints](#5-endpoints)
-   * [`POST /api/v1/jobs`](#51-post-apiv1jobs--upload-and-create-a-job) — including [render options](#render-options-optional)
+   * [`POST /api/v1/jobs`](#51-post-apiv1jobs--upload-and-create-a-job) — including [render options](#render-options-optional) and [output directory](#output-directory-optional)
    * [`GET /api/v1/jobs`](#52-get-apiv1jobs--list-jobs)
    * [`GET /api/v1/jobs/{id}`](#53-get-apiv1jobsid--job-detail)
    * [`GET /api/v1/jobs/{id}/progress`](#54-get-apiv1jobsidprogress--poll-progress)
@@ -27,6 +27,8 @@ upscaled result.
    * [`DELETE /api/v1/jobs/{id}`](#57-delete-apiv1jobsid--delete-a-job)
    * [`GET /health`](#58-get-health--liveness)
    * [`GET /api/v1/system/status`](#59-get-apiv1systemstatus--renderer-and-queue-status)
+   * [`GET /api/v1/system/output-dir`](#510-get-apiv1systemoutput-dir--default-output-directory)
+   * [`PUT /api/v1/system/output-dir`](#511-put-apiv1systemoutput-dir--change-the-default-output-directory)
 6. [Frontend recipes](#6-frontend-recipes)
    * [TypeScript types](#61-typescript-types)
    * [Upload with progress](#62-upload-with-progress)
@@ -107,7 +109,7 @@ are cached for 24 h. Exposed response headers: `Content-Disposition`, `Content-L
 | `fps` | Float, e.g. `31.4`. |
 | `speed` | String exactly as ffmpeg prints it, e.g. `"0.82x"` — display as-is, do not parse (parse `parseFloat` only if you need a number). |
 | IDs | UUID v4 strings, e.g. `"769337925-…"`. Treat them as opaque strings. |
-| Filenames | Sanitized basenames. **Server filesystem paths are never returned.** |
+| Filenames | Sanitized basenames. The only directory ever returned is `outputDir` — the render directory the client selected (or the server default), never an internal server path. |
 
 Nullable fields are explicit `null`, never omitted — except three convenience keys:
 
@@ -215,6 +217,7 @@ Uploads the video (streamed straight to disk by the server) and creates a queued
 | `video` | file | yes | Extension must be in `ALLOWED_VIDEO_EXTENSIONS` (`mp4, mkv, mov, webm, m4v, avi, mpg, mpeg, ts, m2ts` by default) **and** must be decodable by ffprobe with a video stream. The original filename is only stored as metadata (path components are stripped). |
 | `width` | text | yes | Integer. `MIN_DIMENSION ≤ width ≤ MAX_DIMENSION` (default `16…7680`) and **even** (H.264 `yuv420p`). |
 | `height` | text | yes | Same rules. |
+| `outputDir` | text | no | Directory the render is written to. Relative → resolved under the *current default output directory*; absolute → must be inside an allowed root (`OUTPUT_DIR` or an `OUTPUT_DIR_ALLOWLIST` entry). Anything else → `400 VALIDATION_ERROR`. See [Output directory](#output-directory-optional). |
 | render options | text | no | Optional tuning, see below. |
 
 Notes for implementers:
@@ -271,6 +274,44 @@ byte-for-byte the documented default command. All values are sent as **text part
 * `render.filename` and `render.label` in the `202` response let you preview the name before the
   render finishes.
 
+#### Output directory (optional)
+
+The destination defaults to the server's `OUTPUT_DIR` (`D:\Hasil Render`), but a client can choose it
+**per job** with the optional `outputDir` text part — no config change and no restart required. The
+global default for new jobs can also be moved at runtime with [`PUT
+/api/v1/system/output-dir`](#511-put-apiv1systemoutput-dir--change-the-default-output-directory).
+
+| `outputDir` value | Result |
+| --- | --- |
+| *(omitted)* | The current default output directory (`OUTPUT_DIR` unless it was changed globally). |
+| `clients/acme` (relative) | `<default>\clients\acme` — missing subdirectories are created on demand. |
+| `E:\Renders\acme` (absolute) | Used as-is, but **only** if it lives inside an allowed root. |
+
+* Allowed roots are `OUTPUT_DIR` **plus** every directory in `OUTPUT_DIR_ALLOWLIST` (comma separated
+  on the server); read them from `GET /api/v1/system/output-dir` → `allowedRoots`. A path outside them
+  is rejected with `400 VALIDATION_ERROR` *before* a job is created: the uploaded file is deleted again
+  and no row is written.
+* Path traversal cannot escape the roots: `../../evil` and `clients/../../evil` are rejected, and a
+  sibling directory that merely shares a prefix with a root (`D:\Hasil Render-evil`) is not treated as
+  inside `D:\Hasil Render`.
+* A per-job `outputDir` always wins over the global default; both are stored on the job (a recovered
+  job renders to the same place). The resolved directory is returned as `outputDir` in the `202`
+  response and in `GET /api/v1/jobs/{id}` / list items.
+* `ALLOW_OUTPUT_DIR_OVERRIDE=false` disables this field server-wide (and the global endpoint); sending
+  it then returns `400 VALIDATION_ERROR` with `details.field = "outputDir"`.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/jobs \
+  -F "video=@/data/sosul eater rev.mp4" \
+  -F "width=3840" \
+  -F "height=1620" \
+  -F "outputDir=clients/acme"
+```
+
+```javascript
+form.append('outputDir', 'clients/acme');   // relative to the current default, or an allowed absolute path
+```
+
 Server-side knobs that change what is accepted:
 
 * `ALLOW_RENDER_TUNING=false` → the endpoint accepts only `video`, `width`, `height` (strict
@@ -319,6 +360,7 @@ Invalid values are rejected **before** the job is created (the upload is deleted
   "position": 2,
   "width": 3840,
   "height": 1620,
+  "outputDir": "D:\\Hasil Render",
   "render": {
     "model": "prob-4",
     "device": 0,
@@ -350,6 +392,7 @@ With the request above the finished file is `sosul eater rev 4K.mp4`.
 | `status` | `queued` \| `processing` | `processing` only when the renderer was idle and the job started instantly. |
 | `position` | number | **Informational.** 1 = rendering now or next in line. It changes while the queue moves; do not treat it as a promise. |
 | `width`, `height` | number | Echo of the accepted target resolution. |
+| `outputDir` | string \| null | Absolute directory the render will be written to (the resolved `outputDir` field, or the current default output directory). |
 | `render` | object | The **resolved** render options — every field is present, defaults filled in. Keep it to show a summary (“3840×1620 · prob-4 · qp 20”). |
 
 #### Status codes
@@ -411,6 +454,7 @@ Dashboard/history endpoint. Newest first.
       "status": "processing",
       "input": { "filename": "sosul eater rev.mp4" },
       "output": null,
+      "outputDir": "D:\\Hasil Render",
       "resolution": { "width": 3840, "height": 1620 },
       "progress": {
         "percent": 47.85,
@@ -452,6 +496,7 @@ Each item is a [job detail](#53-get-apiv1jobsid--job-detail) **plus**:
   "status": "completed",
   "input": { "filename": "sosul eater rev.mp4" },
   "output": { "filename": "sosul eater rev_prob3_3840x1620.mp4", "sizeBytes": 1892344331 },
+  "outputDir": "D:\\Hasil Render",
   "resolution": { "width": 3840, "height": 1620 },
   "render": {
     "model": "prob-3",
@@ -487,6 +532,7 @@ Each item is a [job detail](#53-get-apiv1jobsid--job-detail) **plus**:
 | --- | --- | --- |
 | `input.filename` | string | Sanitized original filename (metadata only). |
 | `output` | object \| null | `null` until the render completed successfully. `filename` is the final file name inside the server output folder; `sizeBytes` may be `null` for jobs rendered before the size was recorded. |
+| `outputDir` | string \| null | Absolute directory the render is (or will be) written to. `null` for jobs created before per-job output directories existed. |
 | `resolution` | object | Target resolution that was requested and rendered. |
 | `render` | object \| null | Resolved render options (model, Topaz tunables, encoder quality, audio handling). `null` only for jobs created before the options existed. |
 | `progress.percent` | number | `0…100`; `100` once completed. |
@@ -629,6 +675,7 @@ grace period you may still see `cancel_requested` — keep polling `.../progress
   "status": "cancelled",
   "input": { "filename": "sosul eater rev.mp4" },
   "output": null,
+  "outputDir": "D:\\Hasil Render",
   "resolution": { "width": 3840, "height": 1620 },
   "progress": { "percent": 0, "frame": null, "fps": null, "speed": null, "elapsedSeconds": null, "durationSeconds": 20 },
   "timestamps": { "createdAt": "…", "startedAt": "…", "completedAt": "…", "updatedAt": "…" },
@@ -773,6 +820,53 @@ Use this to render an operational banner/status widget and to pre-validate uploa
 
 ---
 
+### 5.10 `GET /api/v1/system/output-dir` — default output directory
+
+Returns the directory that **new** jobs render into by default (a per-job `outputDir` still wins).
+
+```json
+{
+  "outputDir": "D:\\Hasil Render",
+  "configured": "D:\\Hasil Render",
+  "allowOverride": true,
+  "allowedRoots": ["D:\\Hasil Render", "E:\\Renders"]
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `outputDir` | string | Effective default directory for new jobs. |
+| `configured` | string | `OUTPUT_DIR` from the server environment — the reset target. |
+| `allowOverride` | boolean | `false` → both the per-job `outputDir` field and the `PUT` below are rejected. |
+| `allowedRoots` | string[] | Every directory a render may be written into — use it to build a directory picker. |
+
+**Status codes:** `200`.
+
+---
+
+### 5.11 `PUT /api/v1/system/output-dir` — change the default output directory
+
+```bash
+curl -X PUT http://localhost:3000/api/v1/system/output-dir \
+  -H "Content-Type: application/json" \
+  -d '{ "outputDir": "E:\\Renders" }'
+```
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `outputDir` | string \| null | Absolute path inside `allowedRoots`, or `null` to reset to `OUTPUT_DIR`. |
+
+* Applies to **new** jobs only; jobs already created keep the directory stored on their row.
+* The value is persisted and survives a restart.
+* Returns the same body as [`GET /api/v1/system/output-dir`](#510-get-apiv1systemoutput-dir--default-output-directory).
+
+**Status codes:** `200`; `400 VALIDATION_ERROR` (path outside an allowed root, a malformed body, or
+`ALLOW_OUTPUT_DIR_OVERRIDE=false`).
+
+---
+
 ## 6. Frontend recipes
 
 ### 6.1 TypeScript types
@@ -908,6 +1002,8 @@ export interface JobDetail {
   status: JobStatus;
   input: { filename: string };
   output: JobOutput | null;
+  /** Absolute render directory (per-job `outputDir` or the server default); `null` for legacy jobs. */
+  outputDir: string | null;
   resolution: { width: number; height: number };
   /** `null` only for jobs created before the render options existed. */
   render: RenderOptions | null;
@@ -954,8 +1050,22 @@ export interface CreateJobResponse {
   position: number;
   width: number;
   height: number;
+  /** Absolute directory the render will be written to. */
+  outputDir: string | null;
   /** Resolved options (defaults filled in) — show them to confirm the request. */
   render: RenderOptions;
+}
+
+/** GET / PUT /api/v1/system/output-dir */
+export interface OutputDirState {
+  /** Effective default for new jobs. */
+  outputDir: string;
+  /** `OUTPUT_DIR` from the environment (reset target). */
+  configured: string;
+  /** `false` → clients may not change the output location. */
+  allowOverride: boolean;
+  /** Every directory a render may be written into. */
+  allowedRoots: string[];
 }
 
 export interface JobListResponse {
