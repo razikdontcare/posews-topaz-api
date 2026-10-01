@@ -34,6 +34,9 @@ const DEFAULTS = Object.freeze({
   jobRetentionHours: 72,
   failedJobRetentionHours: 24,
   tempStaleHours: 24,
+  urlDownloadTimeoutMs: 3600000, // 1 hour
+  urlDownloadMaxRedirects: 5,
+  urlUserAgent: "video-upscaler-api",
   minDimension: 16,
   maxDimension: 7680,
   probeTimeoutMs: 60000,
@@ -211,6 +214,12 @@ function buildConfig() {
     );
   }
 
+  const maxUploadSizeBytes = readInt(
+    "MAX_UPLOAD_SIZE_BYTES",
+    DEFAULTS.maxUploadSizeBytes,
+    { min: 1024 },
+  );
+
   const dataDir = readPath("DATA_DIR", path.join(PROJECT_ROOT, "data"));
   const logsDir = readPath("LOGS_DIR", path.join(PROJECT_ROOT, "logs"));
   const outputDir = readPath("OUTPUT_DIR", DEFAULTS.outputDir);
@@ -281,16 +290,32 @@ function buildConfig() {
     }),
 
     // Upload handling
-    maxUploadSizeBytes: readInt(
-      "MAX_UPLOAD_SIZE_BYTES",
-      DEFAULTS.maxUploadSizeBytes,
-      { min: 1024 },
-    ),
+    maxUploadSizeBytes: maxUploadSizeBytes,
     allowedExtensions: new Set(
       readList("ALLOWED_VIDEO_EXTENSIONS", DEFAULTS.allowedExtensions).map(
         (ext) => ext.replace(/^\./, "").toLowerCase(),
       ),
     ),
+
+    // Create-from-URL (POST /api/v1/jobs/url). The server downloads the video
+    // itself before a job exists, so the size/time budgets mirror an upload.
+    allowUrlJobs: readBool("ALLOW_URL_JOBS", true),
+    urlMaxSizeBytes: readInt("URL_MAX_SIZE_BYTES", maxUploadSizeBytes, {
+      min: 1024,
+    }),
+    urlDownloadTimeoutMs: readInt(
+      "URL_DOWNLOAD_TIMEOUT_MS",
+      DEFAULTS.urlDownloadTimeoutMs,
+      { min: 1000 },
+    ),
+    urlDownloadMaxRedirects: readInt(
+      "URL_DOWNLOAD_MAX_REDIRECTS",
+      DEFAULTS.urlDownloadMaxRedirects,
+      { min: 0, max: 20 },
+    ),
+    // `false` blocks loopback/private/reserved targets (SSRF protection).
+    urlAllowPrivateHosts: readBool("URL_ALLOW_PRIVATE_HOSTS", false),
+    urlUserAgent: readString("URL_USER_AGENT", DEFAULTS.urlUserAgent),
 
     // Renderer / queue
     queueConcurrency,
@@ -459,6 +484,10 @@ function createConfig(overrides = {}) {
   });
   if (overrides.dataDir !== undefined && overrides.dbFile === undefined) {
     merged.dbFile = path.join(merged.dataDir, "jobs.sqlite");
+  }
+  // Unless it is set explicitly, the URL download budget follows the upload one.
+  if (overrides.maxUploadSizeBytes !== undefined && overrides.urlMaxSizeBytes === undefined) {
+    merged.urlMaxSizeBytes = merged.maxUploadSizeBytes;
   }
   if (overrides.allowedOutputRoots !== undefined) {
     merged.allowedOutputRoots = Object.freeze(

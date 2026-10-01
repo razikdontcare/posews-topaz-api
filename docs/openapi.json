@@ -292,6 +292,38 @@
         }
       }
     },
+    "/api/v1/jobs/url": {
+      "post": {
+        "tags": ["Jobs"],
+        "summary": "Create a job from a remote video URL",
+        "description": "`application/json` alternative to the multipart upload: the **server** downloads the video from `url` into the same per-job temp folder, validates it with ffprobe, then creates the job. The request stays open until the download completes (just like an upload); once created, the render does not depend on the caller — poll it like any other job.\n\nOnly `http`/`https` URLs are accepted and the host must resolve to a public address unless `URL_ALLOW_PRIVATE_HOSTS=true` (SSRF protection; every redirect hop is re-checked). The download is bounded by `URL_MAX_SIZE_BYTES` and `URL_DOWNLOAD_TIMEOUT_MS`. The same whitelisted render option fields as `POST /api/v1/jobs` are accepted as JSON properties.\n\nErrors: `400` (`VALIDATION_ERROR`, `INVALID_URL`, `INVALID_VIDEO`), `403` (`URL_NOT_ALLOWED` — blocked host, or `ALLOW_URL_JOBS=false`), `413` (`URL_DOWNLOAD_TOO_LARGE`), `502` (`URL_DOWNLOAD_ERROR`), `503` (`RENDERER_UNAVAILABLE`).",
+        "operationId": "createJobFromUrl",
+        "parameters": [{ "$ref": "#/components/parameters/RequestIdHeader" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateJobFromUrlRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Downloaded, validated and queued",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreateJobResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "413": { "$ref": "#/components/responses/UploadTooLarge" },
+          "502": { "$ref": "#/components/responses/BadGateway" },
+          "503": { "$ref": "#/components/responses/RendererUnavailable" }
+        }
+      }
+    },
     "/api/v1/jobs/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/JobIdPath" }],
       "get": {
@@ -486,6 +518,18 @@
         "content": {
           "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
         }
+      },
+      "Forbidden": {
+        "description": "`URL_NOT_ALLOWED` — the target host is blocked (private/loopback address) or URL jobs are disabled.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
+      },
+      "BadGateway": {
+        "description": "`URL_DOWNLOAD_ERROR` — the remote server could not be reached or answered with an error.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/ApiErrorResponse" } }
+        }
       }
     },
     "schemas": {
@@ -666,6 +710,38 @@
           "completed": {
             "type": "boolean",
             "description": "Present only for terminal statuses: `true` for `completed`, `false` for `failed`/`cancelled`. Stop polling when this key exists."
+          }
+        }
+      },
+      "CreateJobFromUrlRequest": {
+        "type": "object",
+        "description": "Create-from-URL JSON body. In addition to the properties below, any render option field accepted by `POST /api/v1/jobs` (`model`, `device`, `vram`, `instances`, `preblur`, `noise`, `details`, `halo`, `blur`, `compression`, `blend`, `qp`, `preset`, `audio`, `fps`, `filename`, `label`) may be sent and is validated the same way.",
+        "required": ["url", "width", "height"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute `http`/`https` URL of the video. Must not embed credentials and must not resolve to a private/loopback/reserved address (unless `URL_ALLOW_PRIVATE_HOSTS=true`).",
+            "example": "https://example.com/videos/sosul%20eater%20rev.mp4"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 7680,
+            "description": "Target width; must be even (yuv420p).",
+            "example": 3840
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 7680,
+            "description": "Target height; must be even (yuv420p).",
+            "example": 1620
+          },
+          "outputDir": {
+            "type": "string",
+            "description": "Same semantics as the upload endpoint: absolute inside an allowed root, or relative subdirectory of the default output directory.",
+            "example": "clients/acme"
           }
         }
       },
@@ -863,9 +939,18 @@
       "Thresholds": {
         "type": "object",
         "description": "Server limits — use them for client-side validation instead of hardcoding values.",
-        "required": ["maxUploadSizeBytes", "minDimension", "maxDimension"],
+        "required": ["maxUploadSizeBytes", "allowUrlJobs", "urlMaxSizeBytes", "minDimension", "maxDimension"],
         "properties": {
           "maxUploadSizeBytes": { "type": "integer", "example": 53687091200 },
+          "allowUrlJobs": {
+            "type": "boolean",
+            "description": "Whether `POST /api/v1/jobs/url` is enabled (`ALLOW_URL_JOBS`)."
+          },
+          "urlMaxSizeBytes": {
+            "type": "integer",
+            "description": "Maximum size of a video downloaded from a URL (`URL_MAX_SIZE_BYTES`, defaults to `MAX_UPLOAD_SIZE_BYTES`).",
+            "example": 53687091200
+          },
           "minDimension": { "type": "integer", "example": 16 },
           "maxDimension": { "type": "integer", "example": 7680 }
         }
@@ -979,6 +1064,10 @@
           "UPLOAD_TOO_LARGE",
           "INVALID_VIDEO",
           "UNSUPPORTED_MEDIA_TYPE",
+          "INVALID_URL",
+          "URL_NOT_ALLOWED",
+          "URL_DOWNLOAD_ERROR",
+          "URL_DOWNLOAD_TOO_LARGE",
           "JOB_NOT_FOUND",
           "JOB_NOT_CANCELLABLE",
           "JOB_NOT_COMPLETED",

@@ -14,6 +14,10 @@ const ERROR_CODES = Object.freeze({
   UPLOAD_TOO_LARGE: 413,
   INVALID_VIDEO: 400,
   UNSUPPORTED_MEDIA_TYPE: 415,
+  INVALID_URL: 400,
+  URL_NOT_ALLOWED: 403,
+  URL_DOWNLOAD_ERROR: 502,
+  URL_DOWNLOAD_TOO_LARGE: 413,
   JOB_NOT_FOUND: 404,
   JOB_NOT_CANCELLABLE: 409,
   JOB_NOT_COMPLETED: 409,
@@ -71,6 +75,11 @@ function toAppError(error, fallbackCode = 'INTERNAL_ERROR', fallbackMessage) {
 const errors = {
   validation: (message, details) => new AppError('VALIDATION_ERROR', message, { details }),
   invalidVideo: (message, details) => new AppError('INVALID_VIDEO', message, { details }),
+  invalidUrl: (message, details) => new AppError('INVALID_URL', message, { details }),
+  urlNotAllowed: (message, details) => new AppError('URL_NOT_ALLOWED', message, { details }),
+  urlDownload: (message, options) => new AppError('URL_DOWNLOAD_ERROR', message, options),
+  urlDownloadTooLarge: (message, details) =>
+    new AppError('URL_DOWNLOAD_TOO_LARGE', message, { details }),
   jobNotFound: (id) => new AppError('JOB_NOT_FOUND', `Job ${id} was not found.`),
   jobNotCancellable: (id, status) =>
     new AppError(

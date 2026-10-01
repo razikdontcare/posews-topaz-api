@@ -74,8 +74,8 @@ test('openapi.json is a valid OpenAPI 3.1 document', () => {
   const operations = Object.values(spec.paths).flatMap((item) =>
     Object.keys(item).filter((key) => ['get', 'post', 'put', 'patch', 'delete'].includes(key)),
   );
-  assert.equal(operations.length, 11, 'every operation must be documented');
-  assert.equal(Object.keys(spec.paths).length, 8, 'every endpoint must be documented');
+  assert.equal(operations.length, 12, 'every operation must be documented');
+  assert.equal(Object.keys(spec.paths).length, 9, 'every endpoint must be documented');
   assert.equal(Object.keys(spec.components.schemas).length >= 15, true);
 });
 

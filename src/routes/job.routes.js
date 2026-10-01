@@ -9,6 +9,7 @@ function createJobRouter({ controller }) {
   const router = express.Router();
 
   router.post('/jobs', controller.create);
+  router.post('/jobs/url', controller.createFromUrl);
   router.get('/jobs', controller.list);
   router.get('/jobs/:id', controller.get);
   router.get('/jobs/:id/progress', controller.progress);

@@ -107,6 +107,17 @@ Everything is read once at startup from `.env` / the process environment (`src/c
 | `ALLOWED_VIDEO_EXTENSIONS`        | `mp4,mkv,mov,webm,m4v,avi,mpg,mpeg,ts,m2ts` | Extension allowlist (the real check is ffprobe). |
 | `PROBE_TIMEOUT_MS`                | `60000`                                     | ffprobe timeout per file.                        |
 
+### Create from URL
+
+| Variable                        | Default                   | Description                                                                                     |
+| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `ALLOW_URL_JOBS`                | `true`                    | Enable `POST /api/v1/jobs/url`. `false` → the endpoint answers `403 URL_NOT_ALLOWED`.            |
+| `URL_MAX_SIZE_BYTES`            | `MAX_UPLOAD_SIZE_BYTES`   | Maximum size of a video downloaded from a URL.                                                   |
+| `URL_DOWNLOAD_TIMEOUT_MS`       | `3600000`                 | Total budget for one download (1 hour).                                                          |
+| `URL_DOWNLOAD_MAX_REDIRECTS`    | `5`                       | Redirect hops followed before the download is refused.                                          |
+| `URL_ALLOW_PRIVATE_HOSTS`       | `false`                   | `false` (recommended) rejects loopback/private/reserved targets (SSRF). Set `true` only for trusted internal hosts. |
+| `URL_USER_AGENT`                | `video-upscaler-api`      | `User-Agent` sent with the download request.                                                      |
+
 ### Queue and rendering
 
 | Variable                       | Default         | Description                                                                                                                                                    |
@@ -274,6 +285,7 @@ Base URL: `http://<host>:<port>`. Errors are always:
 | Method   | Path                                         | Purpose                                               |
 | -------- | -------------------------------------------- | ----------------------------------------------------- |
 | `POST`   | `/api/v1/jobs`                               | Multipart upload (`video`, `width`, `height`, optional `outputDir`) → `202` |
+| `POST`   | `/api/v1/jobs/url`                           | Create a job from a remote video URL (server downloads it) → `202` |
 | `GET`    | `/api/v1/jobs?page=1&limit=20&status=queued` | Paginated list                                        |
 | `GET`    | `/api/v1/jobs/:id`                           | Full job detail                                       |
 | `GET`    | `/api/v1/jobs/:id/progress`                  | Lightweight polling endpoint                          |
@@ -413,6 +425,44 @@ curl.exe -X POST http://localhost:3000/api/v1/jobs `
 The response is sent as soon as the file is on disk and the job exists — never after rendering.
 `position` is 1-based inside the render pipeline (1 = rendering or next), so it may change while
 you poll.
+
+### Create a job from a URL
+
+Instead of uploading the bytes from the calling machine, the **server** can fetch the video from a
+remote `http(s)` URL and queue it exactly like an upload. Send the same options as JSON:
+
+```bat
+curl.exe -X POST http://localhost:3000/api/v1/jobs/url ^
+  -H "Content-Type: application/json" ^
+  -d "{\"url\": \"https://example.com/videos/sosul%20eater%20rev.mp4\", \"width\": 3840, \"height\": 1620}"
+```
+
+```json
+{
+  "url": "https://example.com/videos/sosul eater rev.mp4",
+  "width": 3840,
+  "height": 1620,
+  "outputDir": "clients/acme",
+  "filename": "sosul eater rev"
+}
+```
+
+The response is the same `202` payload as the upload endpoint. The request stays open until the
+download finishes (like an upload); once the job exists the render is owned by the server and does
+not depend on the caller — poll `GET /api/v1/jobs/{id}/progress` as usual.
+
+Rules and limits:
+
+- Only `http`/`https` URLs are accepted (no `file:`, no credentials in the URL).
+- **SSRF protection:** the host must resolve to a public address. Loopback, private, link-local,
+  CGNAT and reserved addresses are rejected with `403 URL_NOT_ALLOWED`, and every redirect hop is
+  re-checked. Set `URL_ALLOW_PRIVATE_HOSTS=true` only for trusted, internal deployments.
+- The download is bounded by `URL_MAX_SIZE_BYTES` (defaults to `MAX_UPLOAD_SIZE_BYTES`) and
+  `URL_DOWNLOAD_TIMEOUT_MS`; excessive redirects are refused (`URL_DOWNLOAD_MAX_REDIRECTS`).
+- The server derives the input filename from the URL path or the `Content-Disposition` header and
+  validates the file with ffprobe before the job is created — the same as an upload.
+- Disable the whole feature with `ALLOW_URL_JOBS=false` (then the endpoint answers
+  `403 URL_NOT_ALLOWED`).
 
 ### Poll progress (~1×/second)
 
@@ -675,6 +725,9 @@ HTTP responses against the documented schemas.
 - **Deleting a job does not delete the render** unless you pass `?deleteOutput=true`.
 - **Failed jobs keep their uploaded input** for `FAILED_JOB_RETENTION_HOURS` (diagnostics); completed
   and cancelled jobs delete `TEMP_DIR\<jobId>` immediately.
+- **Create-from-URL downloads on the server.** The video is streamed into the same
+  `TEMP_DIR\<jobId>` folder and probed before the job exists; only public hosts are fetched unless
+  `URL_ALLOW_PRIVATE_HOSTS=true`. A cancelled/failed download leaves no temp data and no job.
 - **Unknown duration**: if the container exposes neither `format.duration`, stream duration nor
   `nb_frames`, `progress` stays `0` until the render finishes (`progress=100`).
 - **Progress is throttled** to one SQLite write per `PROGRESS_PERSIST_INTERVAL_MS`; the polling

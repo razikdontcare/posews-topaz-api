@@ -52,61 +52,61 @@ function createJobService({
   }
 
   /**
-   * Creates a job from a completed upload.
+   * Creates a job from a finished input source (an upload or a downloaded URL).
    *
-   * The uploaded file is probed *before* the job row exists: an unreadable file
+   * The input file is probed *before* the job row exists: an unreadable file
    * never becomes a job, and the temporary directory is removed again.
    */
-  async function createFromUpload(upload) {
-    const log = logger?.withJob ? logger.withJob(upload.jobId) : logger;
+  async function createFromSource(source) {
+    const log = logger?.withJob ? logger.withJob(source.jobId) : logger;
 
     let media;
     try {
-      media = await probeService.inspect(upload.inputPath);
+      media = await probeService.inspect(source.inputPath);
     } catch (error) {
-      await uploadService?.discardUpload?.(upload);
-      log?.warn?.(`rejected upload: ${error.message}`);
+      await uploadService?.discardUpload?.(source);
+      log?.warn?.(`rejected input: ${error.message}`);
       throw error;
     }
 
     let job;
     try {
       job = repository.create({
-        id: upload.jobId,
+        id: source.jobId,
         status: JOB_STATUS.QUEUED,
-        original_filename: upload.originalFilename,
-        input_path: upload.inputPath,
+        original_filename: source.originalFilename,
+        input_path: source.inputPath,
         // Effective render directory; falls back to the current default output dir.
-        output_dir: upload.outputDir || paths.outputDir,
-        width: upload.width,
-        height: upload.height,
+        output_dir: source.outputDir || paths.outputDir,
+        width: source.width,
+        height: source.height,
         duration_seconds: media.durationSeconds,
         has_audio: media.hasAudio ? 1 : 0,
         audio_codec: media.audioCodec,
-        render_options: upload.renderOptions ? JSON.stringify(upload.renderOptions) : null,
+        render_options: source.renderOptions ? JSON.stringify(source.renderOptions) : null,
         progress_percent: 0,
       });
     } catch (error) {
-      await uploadService?.discardUpload?.(upload);
+      await uploadService?.discardUpload?.(source);
       throw error;
     }
 
     if (!job) {
-      await uploadService?.discardUpload?.(upload);
+      await uploadService?.discardUpload?.(source);
       throw errors.internal('Job row could not be created.');
     }
 
     const position = repository.countPipelineAhead(job.id, job.created_at) + 1;
     log?.info?.(
-      `created (${upload.originalFilename}, ${upload.width}x${upload.height}, ` +
+      `created (${source.originalFilename}, ${source.width}x${source.height}, ` +
         `${media.durationSeconds === null ? 'unknown duration' : `${media.durationSeconds.toFixed(2)}s`}, ` +
         `audio=${media.hasAudio ? media.audioCodec || 'yes' : 'none'})`,
     );
-    if (upload.renderOptions) {
-      log?.info?.(`options: ${summarizeRenderOptions(upload.renderOptions, config)}`);
+    if (source.renderOptions) {
+      log?.info?.(`options: ${summarizeRenderOptions(source.renderOptions, config)}`);
     }
-    if (upload.outputDir && upload.outputDir !== paths.outputDir) {
-      log?.info?.(`output directory: ${paths.redact(upload.outputDir)}`);
+    if (source.outputDir && source.outputDir !== paths.outputDir) {
+      log?.info?.(`output directory: ${paths.redact(source.outputDir)}`);
     }
 
     queue.enqueue(job.id);
@@ -410,7 +410,9 @@ function createJobService({
 
   return {
     cancel,
-    createFromUpload,
+    createFromSource,
+    // Backwards-compatible alias: an upload is just one kind of input source.
+    createFromUpload: createFromSource,
     getDetail,
     getDownload,
     getProgress,

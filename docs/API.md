@@ -19,6 +19,7 @@ upscaled result.
 4. [Job status reference](#4-job-status-reference)
 5. [Endpoints](#5-endpoints)
    * [`POST /api/v1/jobs`](#51-post-apiv1jobs--upload-and-create-a-job) — including [render options](#render-options-optional) and [output directory](#output-directory-optional)
+   * [`POST /api/v1/jobs/url`](#511-post-apiv1jobsurl--create-a-job-from-a-remote-video-url)
    * [`GET /api/v1/jobs`](#52-get-apiv1jobs--list-jobs)
    * [`GET /api/v1/jobs/{id}`](#53-get-apiv1jobsid--job-detail)
    * [`GET /api/v1/jobs/{id}/progress`](#54-get-apiv1jobsidprogress--poll-progress)
@@ -60,6 +61,7 @@ network does **not** affect the job — reopen the page and continue polling `GE
 | Method | Path | Purpose | Success |
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/jobs` | Upload a video and create a job | `202` |
+| `POST` | `/api/v1/jobs/url` | Create a job from a remote video URL (server downloads it) | `202` |
 | `GET` | `/api/v1/jobs` | Paginated job list (dashboard, history) | `200` |
 | `GET` | `/api/v1/jobs/{id}` | Full job detail | `200` |
 | `GET` | `/api/v1/jobs/{id}/progress` | Lightweight polling payload | `200` |
@@ -148,6 +150,10 @@ Every non-2xx response (except an abrupt client abort) has the same body:
 | `INVALID_VIDEO` | 400 | The upload is not a decodable video, or has no video stream | `{ ffprobe? }` | “This file can’t be read as a video.” |
 | `UPLOAD_ERROR` | 400 | Malformed multipart body / stream error | – | Treat as a failed upload, let the user retry. |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Body is not `multipart/form-data` | – | Frontend bug: check that you send `FormData` and do not set `Content-Type` manually. |
+| `INVALID_URL` | 400 | `url` is missing, malformed, too long, or embeds credentials | `{ field, maxLength? }` | Validate the link in the UI before sending it. |
+| `URL_NOT_ALLOWED` | 403 | The URL host resolves to a private/loopback/reserved address, uses a non-`http(s)` scheme, or `ALLOW_URL_JOBS=false` | `{ field, allowedProtocols? }` | Show “this link is not allowed”; do not retry. |
+| `URL_DOWNLOAD_TOO_LARGE` | 413 | The remote video is bigger than `URL_MAX_SIZE_BYTES` | `{ maxSizeBytes, contentLength? }` | Show the limit; pre-check `thresholds.urlMaxSizeBytes` if the size is known. |
+| `URL_DOWNLOAD_ERROR` | 502 | Host unreachable/timed out, redirect problem, or the remote server answered non-2xx | `{ host? }` | “The video could not be downloaded”, offer a retry. |
 | `JOB_NOT_FOUND` | 404 | Unknown/removed job id | – | Remove it from local state and refresh the list. |
 | `JOB_NOT_COMPLETED` | 409 | Downloading a job that is not `completed` | – | Hide/disable the download button until `completed`. |
 | `JOB_NOT_CANCELLABLE` | 409 | Cancel on `failed`/`cancelled` job | – | Refresh the job state, show “already finished”. |
@@ -428,6 +434,67 @@ if (response.status === 202) {
   const { error } = await response.json();
   // error.code / error.message
 }
+```
+
+---
+
+### 5.1.1 `POST /api/v1/jobs/url` — create a job from a remote video URL
+
+Alternative to the multipart upload: the **server** downloads the video from a public `http(s)` URL
+into the same per-job temp folder, validates it with ffprobe and queues the job. The response is the
+same `202` payload as [5.1](#51-post-apiv1jobs--upload-and-create-a-job).
+
+The request stays open until the download finishes (exactly like an upload). Once the job exists it
+is owned by the server — the render does not depend on the caller, so keep polling
+`GET /api/v1/jobs/{id}/progress` as usual.
+
+#### Request
+
+`Content-Type: application/json`
+
+| Field | Type | Required | Validation |
+| --- | --- | --- | --- |
+| `url` | string | yes | Absolute `http`/`https` URL, ≤ 2048 chars, no embedded credentials. The host must resolve to a public address; loopback/private/reserved targets are rejected with `403 URL_NOT_ALLOWED`, and **every redirect hop is re-checked**. |
+| `width` | integer | yes | Same rules as [5.1](#51-post-apiv1jobs--upload-and-create-a-job). |
+| `height` | integer | yes | Same rules as [5.1](#51-post-apiv1jobs--upload-and-create-a-job). |
+| `outputDir` | string | no | Same semantics as [5.1](#51-post-apiv1jobs--upload-and-create-a-job). |
+| render options | any | no | Same whitelisted fields as [5.1](#51-post-apiv1jobs--upload-and-create-a-job) (`model`, `qp`, `preset`, `audio`, `fps`, `filename`, …). |
+
+The transfer is bounded by `URL_MAX_SIZE_BYTES` (defaults to `MAX_UPLOAD_SIZE_BYTES`),
+`URL_DOWNLOAD_TIMEOUT_MS` and `URL_DOWNLOAD_MAX_REDIRECTS`. The input filename is derived from the
+URL path or the `Content-Disposition` header (metadata only, path components are stripped) and the
+file is validated with ffprobe before the job row is created.
+
+#### Response `202 Accepted`
+
+Identical to [5.1](#51-post-apiv1jobs--upload-and-create-a-job):
+`{ id, status, position, width, height, outputDir, render }`.
+
+#### Status codes
+
+| Status | When |
+| --- | --- |
+| `202` | Downloaded, probed and queued. |
+| `400` | `VALIDATION_ERROR` (missing/invalid `width`/`height` or malformed body), `INVALID_URL`, or `INVALID_VIDEO` (the URL did not return a readable video). |
+| `403` | `URL_NOT_ALLOWED` — blocked/private host, disallowed scheme, or `ALLOW_URL_JOBS=false`. |
+| `413` | `URL_DOWNLOAD_TOO_LARGE` — bigger than `URL_MAX_SIZE_BYTES`. |
+| `502` | `URL_DOWNLOAD_ERROR` — unreachable host, timeout, redirect problem or a non-2xx remote response. |
+| `503` | `RENDERER_UNAVAILABLE` — the renderer is offline (checked before the download starts). |
+
+#### Example
+
+```javascript
+const response = await fetch(`${API}/api/v1/jobs/url`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    url: 'https://example.com/videos/sosul%20eater%20rev.mp4',
+    width: 3840,
+    height: 1620,
+    filename: 'sosul eater rev',
+  }),
+});
+const job = await response.json(); // 202 { id, status, position, … }
 ```
 
 ---
@@ -1056,6 +1123,16 @@ export interface CreateJobResponse {
   render: RenderOptions;
 }
 
+/** POST /api/v1/jobs/url — create a job from a remote video URL. */
+export interface CreateJobFromUrlRequest {
+  url: string;
+  width: number;
+  height: number;
+  outputDir?: string;
+  /** Any render option field from the upload endpoint (model, qp, audio, filename, …). */
+  [option: string]: string | number | null | undefined;
+}
+
 /** GET / PUT /api/v1/system/output-dir */
 export interface OutputDirState {
   /** Effective default for new jobs. */
@@ -1451,6 +1528,11 @@ field, plus per-field “reset to default” actions from `renderOptions.default
 | Limit | Default | Where it comes from |
 | --- | --- | --- |
 | Max upload size | 50 GiB | `MAX_UPLOAD_SIZE_BYTES` (exposed as `thresholds.maxUploadSizeBytes`) |
+| Max URL download size | same as max upload size | `URL_MAX_SIZE_BYTES` (exposed as `thresholds.urlMaxSizeBytes`) |
+| URL download timeout | 1 hour | `URL_DOWNLOAD_TIMEOUT_MS` |
+| URL redirect hops | 5 | `URL_DOWNLOAD_MAX_REDIRECTS` |
+| Create-from-URL | enabled | `ALLOW_URL_JOBS=false` disables `POST /api/v1/jobs/url` (exposed as `thresholds.allowUrlJobs`) |
+| Private URL hosts | blocked | `URL_ALLOW_PRIVATE_HOSTS=true` allows loopback/private targets (internal deployments only) |
 | Accepted resolution | `16…7680`, even numbers | `MIN_DIMENSION`, `MAX_DIMENSION`, `ENFORCE_EVEN_DIMENSIONS` |
 | Accepted extensions | `mp4, mkv, mov, webm, m4v, avi, mpg, mpeg, ts, m2ts` | `ALLOWED_VIDEO_EXTENSIONS` |
 | Selectable models | `prob-3`, `prob-4` | `ALLOWED_MODELS` (exposed as `renderOptions.fields.model.allowed`) |

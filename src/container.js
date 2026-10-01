@@ -21,6 +21,7 @@ const { createProbeService } = require('./services/probe.service');
 const { createRenderService } = require('./services/render.service');
 const { createSettingsService } = require('./services/settings.service');
 const { createUploadService } = require('./services/upload.service');
+const { createUrlService } = require('./services/url.service');
 const { createCleanupService } = require('./services/cleanup.service');
 const { createJobService } = require('./services/job.service');
 const { createRenderWorker } = require('./workers/render.worker');
@@ -83,6 +84,12 @@ function createContainer(config, options = {}) {
     logger: logger.child('cleanup'),
   });
   const uploadService = createUploadService({ config, paths, logger: logger.child('upload') });
+  const urlService = createUrlService({
+    config,
+    paths,
+    logger: logger.child('url'),
+    parseDimension: uploadService.parseDimension,
+  });
 
   const worker = createRenderWorker({
     config,
@@ -138,7 +145,12 @@ function createContainer(config, options = {}) {
     logger: logger.child('job'),
   });
 
-  const jobController = createJobController({ jobService, uploadService, rendererService });
+  const jobController = createJobController({
+    jobService,
+    uploadService,
+    urlService,
+    rendererService,
+  });
   const systemController = createSystemController({
     config,
     repository,
@@ -183,6 +195,7 @@ function createContainer(config, options = {}) {
     settingsRepository,
     settingsService,
     uploadService,
+    urlService,
     worker,
     dispose,
     killAllProcesses: (opts) => killAllProcesses({ logger, ...opts }),

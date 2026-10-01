@@ -33,32 +33,77 @@ function parsePagination(query) {
   return { page, limit };
 }
 
-function createJobController({ jobService, uploadService, rendererService }) {
+function createJobController({ jobService, uploadService, urlService, rendererService }) {
+  /** The renderer must be usable before a (potentially huge) input is accepted. */
+  function assertRendererAvailable() {
+    if (rendererService && !rendererService.isAvailable()) {
+      const status = rendererService.getStatus();
+      throw errors.rendererUnavailable(
+        `The video renderer is not available (${status.reason || status.state}) and no jobs are ` +
+          'accepted right now. See GET /api/v1/system/status for details.',
+      );
+    }
+  }
+
+  /** Same 202 payload for both creation paths (upload and URL). */
+  function createdJobResponse(job, position) {
+    return {
+      id: job.id,
+      status: job.status,
+      position,
+      width: job.width,
+      height: job.height,
+      outputDir: job.output_dir || null,
+      render: renderDescriptor(job),
+    };
+  }
+
+  /**
+   * Aborts the in-flight download when the client disconnects. `req.complete` is
+   * already true (the JSON body was parsed), so a normal `close` is ignored.
+   */
+  function clientAbortSignal(req) {
+    const controller = new AbortController();
+    const onAborted = () => controller.abort();
+    req.on('aborted', onAborted);
+    req.on('close', () => {
+      if (!req.complete) onAborted();
+    });
+    req.on('error', onAborted);
+    return controller.signal;
+  }
+
   return {
     /** POST /api/v1/jobs (multipart/form-data: video, width, height, render options). */
     async create(req, res) {
       // Reject before reading a single byte: a renderer that cannot render must not
       // accept multi-gigabyte uploads that are doomed to fail. The server keeps
       // re-validating in the background and starts accepting jobs again by itself.
-      if (rendererService && !rendererService.isAvailable()) {
-        const status = rendererService.getStatus();
-        throw errors.rendererUnavailable(
-          `The video renderer is not available (${status.reason || status.state}) and no jobs are ` +
-            'accepted right now. See GET /api/v1/system/status for details.',
-        );
-      }
+      assertRendererAvailable();
 
       const upload = await uploadService.receiveUpload(req);
-      const { job, position } = await jobService.createFromUpload(upload);
-      res.status(202).json({
-        id: job.id,
-        status: job.status,
-        position,
-        width: job.width,
-        height: job.height,
-        outputDir: job.output_dir || null,
-        render: renderDescriptor(job),
+      const { job, position } = await jobService.createFromSource(upload);
+      res.status(202).json(createdJobResponse(job, position));
+    },
+
+    /**
+     * POST /api/v1/jobs/url (application/json: url, width, height, render options).
+     *
+     * The server downloads the video itself before the job exists, so the request
+     * stays open for the duration of the transfer — just like an upload.
+     */
+    async createFromUrl(req, res) {
+      assertRendererAvailable();
+      if (!urlService) {
+        throw errors.rendererUnavailable('Creating jobs from a URL is not available on this server.');
+      }
+
+      const source = await urlService.receiveUrl({
+        body: req.body,
+        signal: clientAbortSignal(req),
       });
+      const { job, position } = await jobService.createFromSource(source);
+      res.status(202).json(createdJobResponse(job, position));
     },
 
     /** GET /api/v1/jobs?page=&limit=&status= */

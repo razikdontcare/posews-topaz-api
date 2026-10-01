@@ -70,6 +70,8 @@ function createSystemController({
       jobs: { counts },
       thresholds: {
         maxUploadSizeBytes: config.maxUploadSizeBytes,
+        allowUrlJobs: config.allowUrlJobs,
+        urlMaxSizeBytes: config.urlMaxSizeBytes,
         minDimension: config.minDimension,
         maxDimension: config.maxDimension,
       },
