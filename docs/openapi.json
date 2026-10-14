@@ -58,7 +58,7 @@
       "get": {
         "tags": ["System"],
         "summary": "Default output directory",
-        "description": "The directory new jobs render into by default (a per-job `outputDir` still wins). `outputDir` is the effective default, `configured` is `OUTPUT_DIR` from the environment, and `allowedRoots` lists every directory that may be selected (`OUTPUT_DIR` plus `OUTPUT_DIR_ALLOWLIST`).",
+        "description": "The directory new jobs render into by default (a per-job `outputDir` still wins). `outputDir` is the effective default and `configured` is `OUTPUT_DIR` from the environment.",
         "operationId": "getOutputDir",
         "responses": {
           "200": {
@@ -74,7 +74,7 @@
       "put": {
         "tags": ["System"],
         "summary": "Change the default output directory",
-        "description": "Sets the destination for **new** jobs; already created jobs keep the directory stored on their row. The value must be inside one of `allowedRoots`, or `null` to reset to `OUTPUT_DIR`. The change is persisted and survives a restart. Answers 400 VALIDATION_ERROR when the path is not allowed or when `ALLOW_OUTPUT_DIR_OVERRIDE=false`.",
+        "description": "Sets the destination for **new** jobs; already created jobs keep the directory stored on their row. Any absolute path is accepted, or `null` to reset to `OUTPUT_DIR`. The change is persisted and survives a restart. Answers 400 VALIDATION_ERROR only when `ALLOW_OUTPUT_DIR_OVERRIDE=false`.",
         "operationId": "setOutputDir",
         "requestBody": {
           "required": true,
@@ -133,7 +133,7 @@
                   },
                   "outputDir": {
                     "type": "string",
-                    "description": "Directory the render is written to. Either an absolute path inside one of the server's allowed output roots (`OUTPUT_DIR_ALLOWLIST`) or a relative subdirectory (resolved under the default output directory). A path outside every allowed root is rejected with `VALIDATION_ERROR`. Defaults to `OUTPUT_DIR`; ignored when `ALLOW_OUTPUT_DIR_OVERRIDE=false`. Sent as a text part.",
+                    "description": "Directory the render is written to. Either an absolute path or a relative subdirectory (resolved under the default output directory); missing directories are created. Defaults to `OUTPUT_DIR`; ignored when `ALLOW_OUTPUT_DIR_OVERRIDE=false`. Sent as a text part.",
                     "example": "clients/acme"
                   },
                   "model": {
@@ -740,7 +740,7 @@
           },
           "outputDir": {
             "type": "string",
-            "description": "Same semantics as the upload endpoint: absolute inside an allowed root, or relative subdirectory of the default output directory.",
+            "description": "Same semantics as the upload endpoint: an absolute path, or a relative subdirectory of the default output directory.",
             "example": "clients/acme"
           }
         }
@@ -843,7 +843,7 @@
       },
       "OutputDirResponse": {
         "type": "object",
-        "required": ["outputDir", "configured", "allowOverride", "allowedRoots"],
+        "required": ["outputDir", "configured", "allowOverride"],
         "properties": {
           "outputDir": {
             "type": "string",
@@ -858,12 +858,6 @@
           "allowOverride": {
             "type": "boolean",
             "description": "`false` when ALLOW_OUTPUT_DIR_OVERRIDE=false: both the per-job `outputDir` field and this endpoint are rejected."
-          },
-          "allowedRoots": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Every directory a render may be written into (`OUTPUT_DIR` plus `OUTPUT_DIR_ALLOWLIST`).",
-            "example": ["D:\\\\Hasil Render", "E:\\\\Renders"]
           }
         }
       },
@@ -873,7 +867,7 @@
         "properties": {
           "outputDir": {
             "type": ["string", "null"],
-            "description": "New default output directory (absolute, inside an allowed root), or null to reset to `OUTPUT_DIR`.",
+            "description": "New default output directory (absolute or relative to the current default), or null to reset to `OUTPUT_DIR`.",
             "example": "E:\\\\Renders"
           }
         }

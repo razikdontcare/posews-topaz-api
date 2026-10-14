@@ -223,7 +223,7 @@ Uploads the video (streamed straight to disk by the server) and creates a queued
 | `video` | file | yes | Extension must be in `ALLOWED_VIDEO_EXTENSIONS` (`mp4, mkv, mov, webm, m4v, avi, mpg, mpeg, ts, m2ts` by default) **and** must be decodable by ffprobe with a video stream. The original filename is only stored as metadata (path components are stripped). |
 | `width` | text | yes | Integer. `MIN_DIMENSION ≤ width ≤ MAX_DIMENSION` (default `16…7680`) and **even** (H.264 `yuv420p`). |
 | `height` | text | yes | Same rules. |
-| `outputDir` | text | no | Directory the render is written to. Relative → resolved under the *current default output directory*; absolute → must be inside an allowed root (`OUTPUT_DIR` or an `OUTPUT_DIR_ALLOWLIST` entry). Anything else → `400 VALIDATION_ERROR`. See [Output directory](#output-directory-optional). |
+| `outputDir` | text | no | Directory the render is written to. Relative → resolved under the *current default output directory*; absolute → used as-is. Missing directories are created on demand. See [Output directory](#output-directory-optional). |
 | render options | text | no | Optional tuning, see below. |
 
 Notes for implementers:
@@ -291,15 +291,13 @@ global default for new jobs can also be moved at runtime with [`PUT
 | --- | --- |
 | *(omitted)* | The current default output directory (`OUTPUT_DIR` unless it was changed globally). |
 | `clients/acme` (relative) | `<default>\clients\acme` — missing subdirectories are created on demand. |
-| `E:\Renders\acme` (absolute) | Used as-is, but **only** if it lives inside an allowed root. |
+| `E:\Renders\acme` (absolute) | Used as-is. |
 
-* Allowed roots are `OUTPUT_DIR` **plus** every directory in `OUTPUT_DIR_ALLOWLIST` (comma separated
-  on the server); read them from `GET /api/v1/system/output-dir` → `allowedRoots`. A path outside them
-  is rejected with `400 VALIDATION_ERROR` *before* a job is created: the uploaded file is deleted again
-  and no row is written.
-* Path traversal cannot escape the roots: `../../evil` and `clients/../../evil` are rejected, and a
-  sibling directory that merely shares a prefix with a root (`D:\Hasil Render-evil`) is not treated as
-  inside `D:\Hasil Render`.
+* There is **no allowlist**. This service is deployed on a trusted machine, so any destination the
+  process can write to is accepted and no path is rejected with `VALIDATION_ERROR`; directories that do
+  not exist yet are created on demand.
+* A relative value is resolved against the current default output directory, so `..` segments can step
+  to a sibling/parent directory (for example `../Renders`).
 * A per-job `outputDir` always wins over the global default; both are stored on the job (a recovered
   job renders to the same place). The resolved directory is returned as `outputDir` in the `202`
   response and in `GET /api/v1/jobs/{id}` / list items.
@@ -895,8 +893,7 @@ Returns the directory that **new** jobs render into by default (a per-job `outpu
 {
   "outputDir": "D:\\Hasil Render",
   "configured": "D:\\Hasil Render",
-  "allowOverride": true,
-  "allowedRoots": ["D:\\Hasil Render", "E:\\Renders"]
+  "allowOverride": true
 }
 ```
 
@@ -905,7 +902,6 @@ Returns the directory that **new** jobs render into by default (a per-job `outpu
 | `outputDir` | string | Effective default directory for new jobs. |
 | `configured` | string | `OUTPUT_DIR` from the server environment — the reset target. |
 | `allowOverride` | boolean | `false` → both the per-job `outputDir` field and the `PUT` below are rejected. |
-| `allowedRoots` | string[] | Every directory a render may be written into — use it to build a directory picker. |
 
 **Status codes:** `200`.
 
@@ -923,13 +919,13 @@ Request body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `outputDir` | string \| null | Absolute path inside `allowedRoots`, or `null` to reset to `OUTPUT_DIR`. |
+| `outputDir` | string \| null | Any absolute path (or a path relative to the current default), or `null` to reset to `OUTPUT_DIR`. |
 
 * Applies to **new** jobs only; jobs already created keep the directory stored on their row.
 * The value is persisted and survives a restart.
 * Returns the same body as [`GET /api/v1/system/output-dir`](#510-get-apiv1systemoutput-dir--default-output-directory).
 
-**Status codes:** `200`; `400 VALIDATION_ERROR` (path outside an allowed root, a malformed body, or
+**Status codes:** `200`; `400 VALIDATION_ERROR` (a malformed body, or
 `ALLOW_OUTPUT_DIR_OVERRIDE=false`).
 
 ---
@@ -1141,8 +1137,6 @@ export interface OutputDirState {
   configured: string;
   /** `false` → clients may not change the output location. */
   allowOverride: boolean;
-  /** Every directory a render may be written into. */
-  allowedRoots: string[];
 }
 
 export interface JobListResponse {

@@ -86,7 +86,6 @@ Everything is read once at startup from `.env` / the process environment (`src/c
 | `HOST`                 | `0.0.0.0`                                                    | Bind address.                                                                               |
 | `TEMP_DIR`             | `D:\VideoTemp`                                               | Uploaded inputs, one folder per job.                                                        |
 | `OUTPUT_DIR`           | `D:\Hasil Render`                                            | Default finished-render directory — changeable at runtime via `PUT /api/v1/system/output-dir`. |
-| `OUTPUT_DIR_ALLOWLIST` | `OUTPUT_DIR`                                                 | Extra roots a per-job `outputDir` may point into (comma separated, e.g. `D:\Hasil Render,E:\Renders`). |
 | `ALLOW_OUTPUT_DIR_OVERRIDE` | `true`                                                 | `false` → clients may not steer the output location: the per-job `outputDir` field **and** `PUT /api/v1/system/output-dir` are rejected. |
 | `DATA_DIR`             | `./data`                                                     | SQLite database (`jobs.sqlite`).                                                            |
 | `LOGS_DIR`             | `./logs`                                                     | Log files when `LOG_TO_FILE=true`.                                                          |
@@ -333,11 +332,10 @@ Per job: send an optional `outputDir` text field next to `video`, `width` and `h
 directory* (`OUTPUT_DIR` unless it was changed globally),
 - an **absolute** value (e.g. `E:\Renders\acme`) is used as-is.
 
-Whatever the input, the resolved directory must live inside one of the server's allowed output roots:
-`OUTPUT_DIR` plus everything listed in `OUTPUT_DIR_ALLOWLIST`. Anything else is rejected with
-`400 VALIDATION_ERROR` before a job is created, and path traversal (`../../evil`) can never escape the
-roots. The resolved directory is stored on the job (so a recovered job renders to the same place) and
-echoed back as `outputDir` in the create response and in `GET /api/v1/jobs/:id`.
+There is **no allowlist**: this API is meant to run on a trusted machine, so any destination the
+process can write to is accepted. Missing directories are created on demand. The resolved directory is
+stored on the job (so a recovered job renders to the same place) and echoed back as `outputDir` in the
+create response and in `GET /api/v1/jobs/:id`.
 
 ```bat
 curl.exe -X POST http://localhost:3000/api/v1/jobs ^
@@ -347,10 +345,8 @@ curl.exe -X POST http://localhost:3000/api/v1/jobs ^
   -F "outputDir=clients/acme"
 ```
 
-Set `OUTPUT_DIR_ALLOWLIST` to open up additional drives/folders (e.g.
-`OUTPUT_DIR_ALLOWLIST=D:\Hasil Render,E:\Renders`). Missing subdirectories are created on demand, and
-the temporary `.rendering.mp4` file is written into the same directory so the final rename stays
-atomic.
+The temporary `.rendering.mp4` file is written into the same directory as the final render, so the
+rename stays atomic.
 
 ### Default output directory (global)
 
@@ -365,8 +361,7 @@ curl.exe http://localhost:3000/api/v1/system/output-dir
 {
   "outputDir": "D:\\Hasil Render",
   "configured": "D:\\Hasil Render",
-  "allowOverride": true,
-  "allowedRoots": ["D:\\Hasil Render", "E:\\Renders"]
+  "allowOverride": true
 }
 ```
 
@@ -376,7 +371,7 @@ curl.exe -X PUT http://localhost:3000/api/v1/system/output-dir ^
   -d "{\"outputDir\": \"E:\\\\Renders\"}"
 ```
 
-- the new value must be inside `allowedRoots` (otherwise `400 VALIDATION_ERROR`),
+- any absolute path is accepted (a relative value resolves under the current default),
 - `{"outputDir": null}` resets it to the configured `OUTPUT_DIR`,
 - jobs that were already created keep the directory stored on their row,
 - a per-job `outputDir` always wins over the global default.

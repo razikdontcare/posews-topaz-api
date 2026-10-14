@@ -58,8 +58,8 @@ function createCleanupService({ config, paths, repository, renderService, logger
   }
 
   /**
-   * Every directory that may hold render artifacts: the configured default, the
-   * `OUTPUT_DIR_ALLOWLIST` roots and the per-job directories jobs actually used.
+   * Every directory that may hold render artifacts: the current default output
+   * directory plus the per-job directories jobs actually used.
    */
   function outputScanDirs() {
     const dirs = new Set();
@@ -67,7 +67,6 @@ function createCleanupService({ config, paths, repository, renderService, logger
       if (typeof dir === 'string' && dir.trim()) dirs.add(dir);
     };
     add(paths.outputDir);
-    for (const root of paths.allowedOutputRoots || []) add(root);
     try {
       for (const dir of repository.findDistinctOutputDirs()) add(dir);
     } catch (error) {

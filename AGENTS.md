@@ -1203,7 +1203,11 @@ Implementasikan basic API hardening:
 * Path traversal prevention.
 * Validate width/height.
 * Jangan menerima arbitrary FFmpeg arguments.
-* Jangan menerima arbitrary output path.
+* ~~Jangan menerima arbitrary output path.~~ **DIBATALKAN (keputusan owner):** API ini berjalan di
+  environment terpercaya, jadi sistem allowlist output directory (`OUTPUT_DIR_ALLOWLIST` /
+  `allowedRoots`) dihapus. `outputDir` boleh menunjuk ke path apa pun yang bisa ditulis proses —
+  lihat `src/config/paths.js`. Batasan yang tersisa hanya yang melindungi server sendiri (job id tetap
+  satu segmen aman, nama file tetap divalidasi).
 * Jangan menggunakan shell interpolation.
 * Jangan expose filesystem paths unnecessarily.
 * Jangan expose raw FFmpeg stderr ke client secara penuh.

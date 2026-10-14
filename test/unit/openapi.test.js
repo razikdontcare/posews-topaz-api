@@ -270,7 +270,6 @@ test('the create / health / system status schemas cover the documented payloads'
   ]);
   assert.deepEqual(schemaProperties(spec.components.schemas.OutputDirResponse).sort(), [
     'allowOverride',
-    'allowedRoots',
     'configured',
     'outputDir',
   ]);

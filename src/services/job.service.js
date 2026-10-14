@@ -318,13 +318,18 @@ function createJobService({
     await cleanupService?.removeJobTemp?.(id);
 
     let outputDeleted = false;
-    if (deleteOutput && job.output_path && paths.isAllowedOutputDir(job.output_path)) {
+    // Only ever delete the file the renderer wrote for this job: the path must be
+    // inside the directory stored on the row (never an arbitrary path).
+    const jobOutputDir = paths.outputDirFor(job);
+    if (deleteOutput && job.output_path && paths.isInside(jobOutputDir, job.output_path)) {
       try {
         await fsp.rm(job.output_path, { force: true });
         outputDeleted = true;
       } catch (error) {
         log?.warn?.(`could not delete rendered file: ${error.message}`);
       }
+    } else if (deleteOutput && job.output_path) {
+      log?.warn?.('refusing to delete a rendered file outside the job output directory');
     }
 
     repository.deleteById(id);

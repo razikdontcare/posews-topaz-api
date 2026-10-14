@@ -148,32 +148,13 @@ function readList(name, fallback) {
 }
 
 /**
- * Resolves the directories a client is allowed to render into.
+ * Resolves the runtime filesystem paths.
  *
- * The default output directory is always part of the list; `OUTPUT_DIR_ALLOWLIST`
- * can add more roots (e.g. `OUTPUT_DIR_ALLOWLIST=D:\Hasil Render,E:\Renders`), so
- * a deployment can let clients pick a destination without ever letting a request
- * write outside these roots.
+ * There is deliberately no allowlist for render destinations: this API is
+ * deployed on a trusted machine, so `outputDir` may point anywhere the process
+ * can write to (owner decision, supersedes the earlier `OUTPUT_DIR_ALLOWLIST`
+ * requirement).
  */
-function normalizeOutputRoots(values, outputDir, warnings = []) {
-  const roots = [];
-  const add = (value) => {
-    const normalized = normalizePathInput(value, null);
-    if (normalized && !roots.includes(normalized)) roots.push(normalized);
-  };
-  add(outputDir);
-  for (const value of values) {
-    const before = roots.length;
-    add(value);
-    if (roots.length === before) {
-      warnings.push(
-        `OUTPUT_DIR_ALLOWLIST entry "${value}" is not a usable directory (or duplicates an earlier one) ` +
-          "and was ignored.",
-      );
-    }
-  }
-  return roots;
-}
 
 function buildConfig() {
   const warnings = [];
@@ -223,11 +204,6 @@ function buildConfig() {
   const dataDir = readPath("DATA_DIR", path.join(PROJECT_ROOT, "data"));
   const logsDir = readPath("LOGS_DIR", path.join(PROJECT_ROOT, "logs"));
   const outputDir = readPath("OUTPUT_DIR", DEFAULTS.outputDir);
-  const allowedOutputRoots = normalizeOutputRoots(
-    readList("OUTPUT_DIR_ALLOWLIST", []),
-    outputDir,
-    warnings,
-  );
   const topazModelDir = readPath("TOPAZ_MODEL_DIR", DEFAULT_TOPAZ_MODEL_DIR);
   const topazModelDataDir = readPath("TOPAZ_MODEL_DATA_DIR", topazModelDir);
 
@@ -264,8 +240,6 @@ function buildConfig() {
     dbFile: readPath("DB_FILE", path.join(dataDir, "jobs.sqlite")),
     tempDir: readPath("TEMP_DIR", DEFAULTS.tempDir),
     outputDir,
-    // Directories a per-job `outputDir` may point into (always includes `outputDir`).
-    allowedOutputRoots: Object.freeze(allowedOutputRoots),
     // `false` ignores the `outputDir` form field entirely.
     allowOutputDirOverride: readBool(
       "ALLOW_OUTPUT_DIR_OVERRIDE",
@@ -488,16 +462,6 @@ function createConfig(overrides = {}) {
   // Unless it is set explicitly, the URL download budget follows the upload one.
   if (overrides.maxUploadSizeBytes !== undefined && overrides.urlMaxSizeBytes === undefined) {
     merged.urlMaxSizeBytes = merged.maxUploadSizeBytes;
-  }
-  if (overrides.allowedOutputRoots !== undefined) {
-    merged.allowedOutputRoots = Object.freeze(
-      normalizeOutputRoots(overrides.allowedOutputRoots, merged.outputDir),
-    );
-  } else if (overrides.outputDir !== undefined) {
-    // Re-derive the allowlist from the new default so tests/tools stay isolated.
-    merged.allowedOutputRoots = Object.freeze(normalizeOutputRoots([], merged.outputDir));
-  } else if (!Array.isArray(merged.allowedOutputRoots) || merged.allowedOutputRoots.length === 0) {
-    merged.allowedOutputRoots = Object.freeze(normalizeOutputRoots([], merged.outputDir));
   }
   if (
     overrides.allowedExtensions !== undefined &&

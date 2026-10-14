@@ -66,9 +66,9 @@ const MIGRATIONS = [
     version: 3,
     name: 'add_output_dir',
     up(database) {
-      // Effective render directory of a job (absolute, validated against
-      // OUTPUT_DIR_ALLOWLIST when the job was created). NULL means the configured
-      // default OUTPUT_DIR.
+      // Effective render directory of a job (absolute, resolved from the client's
+      // outputDir when the job was created). NULL means the configured default
+      // OUTPUT_DIR.
       const columns = database.all('PRAGMA table_info(jobs)').map((row) => row.name);
       if (!columns.includes('output_dir')) {
         database.exec('ALTER TABLE jobs ADD COLUMN output_dir TEXT');

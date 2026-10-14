@@ -40,7 +40,6 @@ test('the default output directory can be read and changed while running', async
   assert.equal(initial.body.outputDir, server.dirs.output);
   assert.equal(initial.body.configured, server.dirs.output);
   assert.equal(initial.body.allowOverride, true);
-  assert.deepEqual(initial.body.allowedRoots, [server.dirs.output]);
 
   const updated = await putOutputDir(server, 'clients');
   assert.equal(updated.status, 200);
@@ -69,18 +68,23 @@ test('the default output directory can be read and changed while running', async
   assert.equal(reset.body.outputDir, server.dirs.output);
 });
 
-test('changing the default rejects a path outside the allowed roots', async (t) => {
+test('changing the default accepts any directory, including outside OUTPUT_DIR', async (t) => {
   const server = await startTestServer();
   t.after(() => server.stop());
 
   const outside = path.join(server.root, 'outside');
-  const rejected = await putOutputDir(server, outside);
-  assert.equal(rejected.status, 400);
-  assert.equal(rejected.body.error.code, 'VALIDATION_ERROR');
+  const accepted = await putOutputDir(server, outside);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.outputDir, outside);
 
-  // The default is untouched.
   const current = await server.api('/api/v1/system/output-dir');
-  assert.equal(current.body.outputDir, server.dirs.output);
+  assert.equal(current.body.outputDir, outside);
+
+  // A job without its own outputDir renders into the new destination.
+  const created = await uploadVideo(server.baseUrl, { fields: FIELDS, filename: 'moved.mp4', chunks: SMALL });
+  const finished = await server.waitForStatus(created.body.id, 'completed');
+  assert.equal(finished.output_dir, outside);
+  assert.ok((await fsp.stat(finished.output_path)).size > 0);
 });
 
 test('a malformed body is rejected', async (t) => {

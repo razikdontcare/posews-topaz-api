@@ -23,24 +23,17 @@ function createSettingsService({ config, paths, repository, logger }) {
   /**
    * Restores persisted settings.
    *
-   * A stored value that is no longer inside `OUTPUT_DIR_ALLOWLIST` (an admin
-   * narrowed the allowlist after it was saved) is discarded, so a stale row can
-   * never make the server write outside its roots.
+   * A malformed row (blank or non-string) is discarded so it can never move the
+   * render destination somewhere unusable.
    */
   function load() {
     const stored = repository.get(OUTPUT_DIR_KEY);
-    if (stored) {
-      try {
-        const dir = paths.setDefaultOutputDir(paths.resolveOutputDir(stored));
-        logger?.info?.(`default output directory restored from settings: ${paths.redact(dir)}`);
-        return { outputDir: dir, source: 'settings' };
-      } catch (error) {
-        logger?.warn?.(
-          `stored output directory is not usable (${error.message}); falling back to OUTPUT_DIR`,
-        );
-        repository.remove(OUTPUT_DIR_KEY);
-      }
+    if (typeof stored === 'string' && stored.trim()) {
+      const dir = paths.setDefaultOutputDir(paths.resolveOutputDir(stored));
+      logger?.info?.(`default output directory restored from settings: ${paths.redact(dir)}`);
+      return { outputDir: dir, source: 'settings' };
     }
+    if (stored !== null && stored !== undefined) repository.remove(OUTPUT_DIR_KEY);
     paths.setDefaultOutputDir(config.outputDir);
     return { outputDir: config.outputDir, source: 'environment' };
   }
@@ -51,7 +44,6 @@ function createSettingsService({ config, paths, repository, logger }) {
       outputDir: paths.currentOutputDir(),
       configured: config.outputDir,
       allowOverride: config.allowOutputDirOverride,
-      allowedRoots: [...paths.allowedOutputRoots],
     };
   }
 
@@ -59,7 +51,7 @@ function createSettingsService({ config, paths, repository, logger }) {
    * Sets (or, with `null`/`""`, resets) the default output directory for **new**
    * jobs. Already created jobs keep the directory stored on their row.
    *
-   * @param {string|null} value absolute path inside an allowed root, or null to reset
+   * @param {string|null} value absolute or relative directory, or null to reset
    * @returns {ReturnType<typeof describe>}
    */
   function setOutputDir(value) {
@@ -87,7 +79,8 @@ function createSettingsService({ config, paths, repository, logger }) {
       return describe();
     }
 
-    // Throws VALIDATION_ERROR when the path is outside every allowed root.
+    // Relative values resolve under the current default; anything else is used
+    // as given (no allowlist).
     const dir = paths.resolveOutputDir(value);
     if (paths.isSamePath(dir, config.outputDir)) {
       // Equal to the environment default: keep the environment as source of truth.

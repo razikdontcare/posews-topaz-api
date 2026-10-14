@@ -6,7 +6,7 @@
  * Database rows are snake_case; the HTTP contract is the nested camelCase shape
  * documented in AGENTS.md §32. Server paths are never exposed: the only directory
  * ever returned is the job's own output directory, which the client selects when
- * it creates the job (`outputDir`, validated against `OUTPUT_DIR_ALLOWLIST`).
+ * it creates the job (`outputDir`).
  */
 
 const path = require('node:path');

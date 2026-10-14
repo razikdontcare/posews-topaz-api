@@ -3,10 +3,11 @@
 /**
  * Per-job output directory resolution (paths.resolveOutputDir / outputDirFor).
  *
- * The output directory is the only path a client may influence, so these are the
- * tests that keep `OUTPUT_DIR_ALLOWLIST` airtight: relative subdirectories are
- * resolved under the default, absolute paths must live inside an allowed root and
- * anything else is rejected before the upload is even accepted.
+ * There is no allowlist: the renderer runs on a trusted machine, so any
+ * destination is honoured. These tests pin the resolution rules that remain —
+ * empty values fall back to the default, relative values resolve under the
+ * default (a `..` segment therefore resolves to a sibling directory) and
+ * absolute values are used as given.
  */
 
 const test = require('node:test');
@@ -47,7 +48,7 @@ test('a relative outputDir is resolved under the default output directory', () =
   assert.equal(paths.resolveOutputDir('./2026/09'), path.join(outputDir, '2026', '09'));
 });
 
-test('an absolute outputDir inside an allowed root is accepted', () => {
+test('an absolute outputDir is used as-is', () => {
   const { paths, outputDir } = fixture();
   const inside = path.join(outputDir, 'nested', 'deep');
   assert.equal(paths.resolveOutputDir(inside), inside);
@@ -55,44 +56,21 @@ test('an absolute outputDir inside an allowed root is accepted', () => {
   assert.equal(paths.resolveOutputDir(`  "${inside}"  `), inside);
 });
 
-test('an outputDir outside every allowed root is rejected', () => {
+test('any absolute destination is accepted, even outside OUTPUT_DIR', () => {
   const { paths, root } = fixture();
-  for (const candidate of [path.join(root, 'elsewhere'), os.tmpdir(), 'C:\\Windows\\Temp']) {
-    assert.throws(
-      () => paths.resolveOutputDir(candidate),
-      (error) => isAppError(error) && error.code === 'VALIDATION_ERROR',
-      `expected ${candidate} to be rejected`,
+  for (const candidate of [path.join(root, 'elsewhere'), os.tmpdir()]) {
+    assert.equal(
+      paths.resolveOutputDir(candidate),
+      path.normalize(candidate),
+      `expected ${candidate} to be accepted`,
     );
   }
 });
 
-test('path traversal cannot escape the output roots', () => {
-  const { paths } = fixture();
-  for (const candidate of ['../../evil', '..\\..\\evil', 'clients/../../evil']) {
-    assert.throws(
-      () => paths.resolveOutputDir(candidate),
-      (error) => isAppError(error) && error.code === 'VALIDATION_ERROR',
-      `expected ${candidate} to be rejected`,
-    );
-  }
-});
-
-test('a sibling directory sharing a prefix with a root is not "inside" it', () => {
+test('a relative outputDir may step outside the default directory', () => {
   const { paths, outputDir } = fixture();
-  assert.equal(paths.isAllowedOutputDir(`${outputDir}-evil`), false);
-  assert.equal(paths.isAllowedOutputDir(outputDir), true);
-  assert.equal(paths.isAllowedOutputDir(path.join(outputDir, 'file.mp4')), true);
-});
-
-test('additional OUTPUT_DIR_ALLOWLIST roots are usable and the default stays allowed', () => {
-  const extraRoot = path.join(os.tmpdir(), 'vua-paths-extra');
-  const { paths, outputDir } = fixture({ allowedOutputRoots: [extraRoot] });
-
-  assert.equal(paths.resolveOutputDir(extraRoot), extraRoot);
-  assert.equal(paths.resolveOutputDir(path.join(extraRoot, 'client')), path.join(extraRoot, 'client'));
-  // The default output directory is always part of the allowlist.
-  assert.equal(paths.resolveOutputDir('sub'), path.join(outputDir, 'sub'));
-  assert.equal(paths.resolveOutputDir(outputDir), outputDir);
+  assert.equal(paths.resolveOutputDir('../../evil'), path.resolve(outputDir, '../../evil'));
+  assert.equal(paths.resolveOutputDir('clients/../../evil'), path.resolve(outputDir, 'clients/../../evil'));
 });
 
 test('outputDirFor honours the job row and falls back safely', () => {
@@ -104,11 +82,11 @@ test('outputDirFor honours the job row and falls back safely', () => {
   assert.equal(paths.outputDirFor({ output_dir: null }), outputDir);
   assert.equal(paths.outputDirFor({}), outputDir);
   assert.equal(paths.outputDirFor(null), outputDir);
-  // A stored directory that is no longer allowed never escapes the roots.
-  assert.equal(paths.outputDirFor({ output_dir: os.tmpdir() }), outputDir);
+  // A stored directory is used as-is, wherever it points.
+  assert.equal(paths.outputDirFor({ output_dir: os.tmpdir() }), path.resolve(os.tmpdir()));
 });
 
-test('tempOutputPath and outputPath stay inside the requested directory', () => {
+test('tempOutputPath keeps the job id inside the requested directory', () => {
   const { paths, outputDir } = fixture();
   const custom = path.join(outputDir, 'clients', 'acme');
   const jobId = 'aaaaaaaa-0000-4000-8000-000000000001';
@@ -120,8 +98,12 @@ test('tempOutputPath and outputPath stay inside the requested directory', () => 
   assert.equal(paths.tempOutputPath(jobId), path.join(outputDir, `.${jobId}.rendering.mp4`));
   assert.equal(paths.outputPath('out.mp4', custom), path.join(custom, 'out.mp4'));
 
+  // An unusable directory value falls back to the default instead of escaping it.
+  assert.equal(paths.tempOutputPath(jobId, '.mp4', ''), path.join(outputDir, `.${jobId}.rendering.mp4`));
+
+  // The job id is still validated: it must stay a single safe path segment.
   assert.throws(
-    () => paths.tempOutputPath(jobId, '.mp4', os.tmpdir()),
+    () => paths.tempOutputPath('../../evil', '.mp4', custom),
     (error) => isAppError(error) && error.code === 'VALIDATION_ERROR',
   );
 });

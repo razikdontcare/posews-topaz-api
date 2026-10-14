@@ -8,9 +8,14 @@
  * the configured directories.
  *
  * The default output directory is also the one runtime-adjustable value in this
- * module: `PUT /api/v1/system/output-dir` moves it (still restricted to
- * `allowedOutputRoots`), so `paths.outputDir` is exposed as a getter and can only
- * be changed through `setDefaultOutputDir()`.
+ * module: `PUT /api/v1/system/output-dir` moves it, so `paths.outputDir` is
+ * exposed as a getter and can only be changed through `setDefaultOutputDir()`.
+ *
+ * There is no output-directory allowlist: this API is deployed on a trusted
+ * machine, so any destination the caller asks for is honoured (owner decision,
+ * supersedes the earlier `OUTPUT_DIR_ALLOWLIST` requirement in AGENTS.md §25).
+ * Path validation is limited to what protects the server itself — job ids stay
+ * single safe segments and every directory is resolved to an absolute path.
  */
 
 const fs = require('node:fs');
@@ -55,36 +60,24 @@ function createPaths(config) {
   const dbFile = config.dbFile;
   // `OUTPUT_DIR`: the immutable, configured default (used to reset the runtime one).
   const configuredOutputDir = config.outputDir;
-  const allowedOutputRoots =
-    Array.isArray(config.allowedOutputRoots) && config.allowedOutputRoots.length > 0
-      ? config.allowedOutputRoots.slice()
-      : [configuredOutputDir];
 
   // Runtime-adjustable default directory for jobs that do not carry their own
-  // `output_dir`. Always inside `allowedOutputRoots`.
+  // `output_dir`.
   let defaultOutputDir = configuredOutputDir;
 
-  /** True when `dir` is one of the configured output roots or lives inside one. */
-  function isAllowedOutputDir(dir) {
-    if (typeof dir !== 'string' || dir.trim() === '') return false;
-    const resolved = path.resolve(dir);
-    return allowedOutputRoots.some((root) => isSamePath(root, resolved) || isInside(root, resolved));
+  /** Resolves any accepted directory value to an absolute path. */
+  function asDirectory(dir) {
+    if (typeof dir === 'string' && dir.trim()) return path.resolve(dir.trim());
+    return defaultOutputDir;
   }
 
   /**
    * Moves the runtime default output directory. Used by the settings service,
-   * which is the only writer; the target must still be an allowed root.
+   * which is the only writer. Any usable path is accepted.
    */
   function setDefaultOutputDir(dir) {
-    const target = dir || configuredOutputDir;
-    if (!isAllowedOutputDir(target)) {
-      throw errors.validation(
-        'The output directory must point into one of the directories this server is allowed to ' +
-          'write renders to.',
-        { field: 'outputDir' },
-      );
-    }
-    defaultOutputDir = target;
+    defaultOutputDir =
+      dir && String(dir).trim() ? path.resolve(String(dir).trim()) : configuredOutputDir;
     return defaultOutputDir;
   }
 
@@ -100,9 +93,8 @@ function createPaths(config) {
    *  - relative            -> resolved under `baseDir` (the default output dir),
    *  - absolute            -> used as-is.
    *
-   * Whatever the input, the result must live inside one of `OUTPUT_DIR_ALLOWLIST`
-   * (which always includes the default output dir), so a request can never choose
-   * an arbitrary location on disk.
+   * Every destination is accepted; missing directories are created on demand by
+   * `ensureOutputDir()`.
    */
   function resolveOutputDir(value, { baseDir } = {}) {
     if (value === undefined || value === null) return defaultOutputDir;
@@ -117,26 +109,16 @@ function createPaths(config) {
     if (!raw) return defaultOutputDir;
 
     const base = baseDir ? path.resolve(baseDir) : path.resolve(defaultOutputDir);
-    const candidate = path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(base, raw);
-    if (!isAllowedOutputDir(candidate)) {
-      throw errors.validation(
-        '"outputDir" must point into one of the directories this server is allowed to write renders to.',
-        { field: 'outputDir' },
-      );
-    }
-    return candidate;
+    return path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(base, raw);
   }
 
   /**
    * The directory a job renders into. Falls back to the default when the stored
-   * value is missing (legacy rows) or no longer inside an allowed root (an admin
-   * narrowed `OUTPUT_DIR_ALLOWLIST` after the job was created).
+   * value is missing (rows created before per-job output directories existed).
    */
   function outputDirFor(job) {
     const stored = job?.output_dir;
-    if (typeof stored === 'string' && stored.trim() && isAllowedOutputDir(stored)) {
-      return stored;
-    }
+    if (typeof stored === 'string' && stored.trim()) return path.resolve(stored.trim());
     return defaultOutputDir;
   }
 
@@ -159,11 +141,7 @@ function createPaths(config) {
    */
   function tempOutputPath(jobId, extension = '.mp4', dir = defaultOutputDir) {
     assertSafeJobId(jobId);
-    const targetDir = dir || defaultOutputDir;
-    if (!isAllowedOutputDir(targetDir)) {
-      throw errors.validation('Invalid output directory.');
-    }
-    return path.join(targetDir, `.${jobId}.rendering${extension}`);
+    return path.join(asDirectory(dir), `.${jobId}.rendering${extension}`);
   }
 
   function outputPath(filename, dir = defaultOutputDir) {
@@ -185,20 +163,17 @@ function createPaths(config) {
     return dir;
   }
 
-  /** Creates a (validated) output directory, e.g. a per-job subdirectory. */
+  /** Creates an output directory, e.g. a per-job subdirectory. */
   async function ensureOutputDir(dir) {
-    const target = dir || defaultOutputDir;
-    if (!isAllowedOutputDir(target)) {
-      throw errors.validation('Invalid output directory.');
-    }
+    const target = asDirectory(dir);
     await ensureDir(target);
     return target;
   }
 
-  /** Creates TEMP_DIR, the output roots, DATA_DIR and LOGS_DIR when missing. */
+  /** Creates TEMP_DIR, the output directory, DATA_DIR and LOGS_DIR when missing. */
   async function ensureRuntimeDirs() {
     const created = [];
-    const targets = new Set([tempDir, defaultOutputDir, dataDir, logsDir, ...allowedOutputRoots]);
+    const targets = new Set([tempDir, defaultOutputDir, dataDir, logsDir]);
     for (const dir of targets) {
       if (!dir) continue;
       const existed = fs.existsSync(dir);
@@ -218,8 +193,8 @@ function createPaths(config) {
     const replacements = [
       [tempDir, '<temp>'],
       [defaultOutputDir, '<output>'],
+      [configuredOutputDir, '<output>'],
       [dataDir, '<data>'],
-      ...allowedOutputRoots.map((root) => [root, '<output>']),
     ];
     for (const [dir, label] of replacements) {
       if (!dir) continue;
@@ -241,7 +216,6 @@ function createPaths(config) {
     },
     /** The immutable `OUTPUT_DIR` from the environment. */
     configuredOutputDir,
-    allowedOutputRoots,
     dbFile,
     jobTempDir,
     jobInputPath,
@@ -251,7 +225,6 @@ function createPaths(config) {
     outputDirFor,
     currentOutputDir,
     setDefaultOutputDir,
-    isAllowedOutputDir,
     isSamePath,
     redact,
     ensureDir,

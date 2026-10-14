@@ -2,8 +2,9 @@
 
 /**
  * Per-job output directory (AGENTS.md §25): a client can send an `outputDir` form
- * field to choose where the render lands, but only inside the directories the
- * server is configured to write to (`OUTPUT_DIR_ALLOWLIST`).
+ * field to choose where the render lands. There is no allowlist — the renderer
+ * runs on a trusted machine, so any destination is accepted and missing
+ * directories are created on demand.
  */
 
 const test = require('node:test');
@@ -11,6 +12,7 @@ const assert = require('node:assert/strict');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 
 const { startTestServer } = require('../helpers/app');
 const { uploadVideo } = require('../helpers/multipart');
@@ -48,9 +50,9 @@ test('a relative outputDir renders into a subdirectory of the default output dir
   assert.equal(detail.body.outputDir, expectedDir);
 });
 
-test('an absolute outputDir inside an allowlisted root is accepted', async (t) => {
-  const extraRoot = path.join(os.tmpdir(), `vua-output-${Date.now()}`);
-  const server = await startTestServer({ allowedOutputRoots: [extraRoot] });
+test('an absolute outputDir outside the default output dir is accepted', async (t) => {
+  const extraRoot = path.join(os.tmpdir(), `vua-output-${randomUUID()}`);
+  const server = await startTestServer();
   t.after(async () => {
     await server.stop();
     await fsp.rm(extraRoot, { recursive: true, force: true });
@@ -70,36 +72,23 @@ test('an absolute outputDir inside an allowlisted root is accepted', async (t) =
   assert.ok((await fsp.stat(finished.output_path)).size > 0);
 });
 
-test('an outputDir outside every allowed root is rejected before a job exists', async (t) => {
+test('a relative outputDir may step outside the default output dir', async (t) => {
   const server = await startTestServer();
   t.after(() => server.stop());
 
-  const outside = path.join(server.root, 'not-allowed');
-  const response = await uploadVideo(server.baseUrl, {
-    fields: { ...FIELDS, outputDir: outside },
+  // `..` resolves to a sibling of the output dir (removed with the test root).
+  const relative = `../escape-${randomUUID()}`;
+  const created = await uploadVideo(server.baseUrl, {
+    fields: { ...FIELDS, outputDir: relative },
     chunks: SMALL,
   });
 
-  assert.equal(response.status, 400);
-  assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+  const expectedDir = path.resolve(server.dirs.output, relative);
+  assert.equal(created.status, 202);
+  assert.equal(created.body.outputDir, expectedDir);
 
-  // Nothing was queued and no temporary upload directory survived.
-  const list = await server.api('/api/v1/jobs');
-  assert.equal(list.body.pagination.total, 0);
-  assert.deepEqual(await fsp.readdir(server.dirs.temp).catch(() => []), []);
-});
-
-test('path traversal through outputDir is rejected', async (t) => {
-  const server = await startTestServer();
-  t.after(() => server.stop());
-
-  const response = await uploadVideo(server.baseUrl, {
-    fields: { ...FIELDS, outputDir: '../../escape' },
-    chunks: SMALL,
-  });
-
-  assert.equal(response.status, 400);
-  assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+  const finished = await server.waitForStatus(created.body.id, 'completed');
+  assert.equal(path.dirname(finished.output_path), expectedDir);
 });
 
 test('ALLOW_OUTPUT_DIR_OVERRIDE=false ignores the field with a clear error', async (t) => {

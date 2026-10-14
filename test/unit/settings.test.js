@@ -27,7 +27,6 @@ async function createFixture(overrides = {}) {
     nodeEnv: 'test',
     tempDir: path.join(root, 'temp'),
     outputDir,
-    allowedOutputRoots: [extraRoot],
     dataDir: path.join(root, 'data'),
     logsDir: path.join(root, 'logs'),
     ...overrides,
@@ -65,7 +64,6 @@ test('with no stored value the configured OUTPUT_DIR is used', async () => {
     assert.equal(state.outputDir, fixture.outputDir);
     assert.equal(state.configured, fixture.outputDir);
     assert.equal(state.allowOverride, true);
-    assert.deepEqual(state.allowedRoots, [fixture.outputDir, fixture.extraRoot]);
   } finally {
     await fixture.close();
   }
@@ -115,29 +113,29 @@ test('null resets to OUTPUT_DIR and clears the stored override', async () => {
   }
 });
 
-test('a directory outside the allowed roots is rejected and changes nothing', async () => {
+test('any directory can be set, including one outside OUTPUT_DIR', async () => {
   const fixture = await createFixture();
   try {
     const { service, paths } = fixture.boot();
-    assert.throws(
-      () => service.setOutputDir(path.join(os.tmpdir(), 'not-allowed')),
-      (error) => isAppError(error) && error.code === 'VALIDATION_ERROR',
-    );
-    assert.equal(paths.outputDir, fixture.outputDir);
-    assert.equal(fixture.repository.get(OUTPUT_DIR_KEY), null);
+    const target = path.join(os.tmpdir(), 'vua-settings-elsewhere');
+
+    const state = service.setOutputDir(target);
+    assert.equal(state.outputDir, target);
+    assert.equal(paths.outputDir, target);
+    assert.equal(fixture.repository.get(OUTPUT_DIR_KEY), target);
   } finally {
     await fixture.close();
   }
 });
 
-test('a persisted value that is no longer allowed is discarded on load', async () => {
+test('a malformed persisted value is discarded on load', async () => {
   const fixture = await createFixture();
   try {
-    fixture.repository.set(OUTPUT_DIR_KEY, path.join(os.tmpdir(), 'gone'));
+    fixture.repository.set(OUTPUT_DIR_KEY, '   ');
     const { service, paths } = fixture.boot();
 
     assert.equal(paths.outputDir, fixture.outputDir, 'falls back to OUTPUT_DIR');
-    assert.equal(fixture.repository.get(OUTPUT_DIR_KEY), null, 'the stale row is removed');
+    assert.equal(fixture.repository.get(OUTPUT_DIR_KEY), null, 'the unusable row is removed');
     assert.equal(service.describe().outputDir, fixture.outputDir);
   } finally {
     await fixture.close();

@@ -378,7 +378,7 @@ function createUploadService({ config, paths, logger, Busboy = require('busboy')
               { field: 'outputDir' },
             );
           }
-          // Throws when the directory is not inside OUTPUT_DIR_ALLOWLIST.
+          // Any usable destination is accepted; missing directories are created.
           outputDir = paths.resolveOutputDir(requestedOutputDir);
         } catch (error) {
           await discardUpload(entry);
